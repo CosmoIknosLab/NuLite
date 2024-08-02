@@ -1,0 +1,15 @@
+orig_n_tiles_cols: 15
+orig_n_tiles_rows: 11
+base_magnification: 40.0
+downsampling: 1
+label_map:
+  background: 0
+patch_overlap: 64
+patch_size: 1024
+base_mpp: 0.2485
+target_patch_mpp: 0.2485
+stain_normalization: false
+magnification: 40.0
+level: 14
+patch_distribution:
+  0: 0

@@ -1,0 +1,592 @@
+[
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_0_10.png": {
+      "row": 0,
+      "col": 10,
+      "background_ratio": 0.309173583984375,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_0_10.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_0_11.png": {
+      "row": 0,
+      "col": 11,
+      "background_ratio": 0.10496807098388672,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_0_11.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_0_12.png": {
+      "row": 0,
+      "col": 12,
+      "background_ratio": 0.8725957870483398,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_0_12.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_1_7.png": {
+      "row": 1,
+      "col": 7,
+      "background_ratio": 0.9130268096923828,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_1_7.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_1_8.png": {
+      "row": 1,
+      "col": 8,
+      "background_ratio": 0.5753412246704102,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_1_8.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_1_9.png": {
+      "row": 1,
+      "col": 9,
+      "background_ratio": 0.604283332824707,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_1_9.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_1_10.png": {
+      "row": 1,
+      "col": 10,
+      "background_ratio": 0.5761394500732422,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_1_10.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_1_11.png": {
+      "row": 1,
+      "col": 11,
+      "background_ratio": 0.02011871337890625,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_1_11.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_1_12.png": {
+      "row": 1,
+      "col": 12,
+      "background_ratio": 0.43810176849365234,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_1_12.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_2_6.png": {
+      "row": 2,
+      "col": 6,
+      "background_ratio": 0.9133052825927734,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_2_6.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_2_7.png": {
+      "row": 2,
+      "col": 7,
+      "background_ratio": 0.16657733917236328,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_2_7.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_2_8.png": {
+      "row": 2,
+      "col": 8,
+      "background_ratio": 0.0005712509155273438,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_2_8.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_2_9.png": {
+      "row": 2,
+      "col": 9,
+      "background_ratio": 0.006549835205078125,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_2_9.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_2_10.png": {
+      "row": 2,
+      "col": 10,
+      "background_ratio": 0.08871173858642578,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_2_10.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_2_11.png": {
+      "row": 2,
+      "col": 11,
+      "background_ratio": 0.008901596069335938,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_2_11.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_2_12.png": {
+      "row": 2,
+      "col": 12,
+      "background_ratio": 0.4653615951538086,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_2_12.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_3_2.png": {
+      "row": 3,
+      "col": 2,
+      "background_ratio": 0.8699541091918945,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_3_2.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_3_6.png": {
+      "row": 3,
+      "col": 6,
+      "background_ratio": 0.6955986022949219,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_3_6.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_3_7.png": {
+      "row": 3,
+      "col": 7,
+      "background_ratio": 0.011155128479003906,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_3_7.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_3_8.png": {
+      "row": 3,
+      "col": 8,
+      "background_ratio": 0.004954338073730469,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_3_8.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_3_9.png": {
+      "row": 3,
+      "col": 9,
+      "background_ratio": 0.0038442611694335938,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_3_9.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_3_10.png": {
+      "row": 3,
+      "col": 10,
+      "background_ratio": 0.010457038879394531,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_3_10.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_3_11.png": {
+      "row": 3,
+      "col": 11,
+      "background_ratio": 0.01658153533935547,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_3_11.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_3_12.png": {
+      "row": 3,
+      "col": 12,
+      "background_ratio": 0.6510477066040039,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_3_12.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_4_1.png": {
+      "row": 4,
+      "col": 1,
+      "background_ratio": 0.9207754135131836,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_4_1.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_4_2.png": {
+      "row": 4,
+      "col": 2,
+      "background_ratio": 0.5997152328491211,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_4_2.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_4_3.png": {
+      "row": 4,
+      "col": 3,
+      "background_ratio": 0.8079652786254883,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_4_3.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_4_5.png": {
+      "row": 4,
+      "col": 5,
+      "background_ratio": 0.6610279083251953,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_4_5.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_4_6.png": {
+      "row": 4,
+      "col": 6,
+      "background_ratio": 0.11522102355957031,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_4_6.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_4_7.png": {
+      "row": 4,
+      "col": 7,
+      "background_ratio": 0.005054473876953125,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_4_7.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_4_8.png": {
+      "row": 4,
+      "col": 8,
+      "background_ratio": 0.008193016052246094,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_4_8.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_4_9.png": {
+      "row": 4,
+      "col": 9,
+      "background_ratio": 0.004761695861816406,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_4_9.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_4_10.png": {
+      "row": 4,
+      "col": 10,
+      "background_ratio": 0.007027626037597656,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_4_10.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_4_11.png": {
+      "row": 4,
+      "col": 11,
+      "background_ratio": 0.014629364013671875,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_4_11.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_4_12.png": {
+      "row": 4,
+      "col": 12,
+      "background_ratio": 0.44643688201904297,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_4_12.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_5_1.png": {
+      "row": 5,
+      "col": 1,
+      "background_ratio": 0.9175176620483398,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_5_1.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_5_2.png": {
+      "row": 5,
+      "col": 2,
+      "background_ratio": 0.7757759094238281,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_5_2.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_5_5.png": {
+      "row": 5,
+      "col": 5,
+      "background_ratio": 0.4949045181274414,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_5_5.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_5_6.png": {
+      "row": 5,
+      "col": 6,
+      "background_ratio": 0.040378570556640625,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_5_6.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_5_7.png": {
+      "row": 5,
+      "col": 7,
+      "background_ratio": 0.056870460510253906,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_5_7.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_5_8.png": {
+      "row": 5,
+      "col": 8,
+      "background_ratio": 0.0019235610961914062,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_5_8.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_5_9.png": {
+      "row": 5,
+      "col": 9,
+      "background_ratio": 0.004433631896972656,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_5_9.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_5_10.png": {
+      "row": 5,
+      "col": 10,
+      "background_ratio": 0.011488914489746094,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_5_10.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_5_11.png": {
+      "row": 5,
+      "col": 11,
+      "background_ratio": 0.023885726928710938,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_5_11.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_5_12.png": {
+      "row": 5,
+      "col": 12,
+      "background_ratio": 0.6920585632324219,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_5_12.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_6_5.png": {
+      "row": 6,
+      "col": 5,
+      "background_ratio": 0.9262170791625977,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_6_5.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_6_6.png": {
+      "row": 6,
+      "col": 6,
+      "background_ratio": 0.1512889862060547,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_6_6.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_6_7.png": {
+      "row": 6,
+      "col": 7,
+      "background_ratio": 0.0035257339477539062,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_6_7.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_6_8.png": {
+      "row": 6,
+      "col": 8,
+      "background_ratio": 0.00095367431640625,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_6_8.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_6_9.png": {
+      "row": 6,
+      "col": 9,
+      "background_ratio": 0.03419208526611328,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_6_9.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_6_10.png": {
+      "row": 6,
+      "col": 10,
+      "background_ratio": 0.1456003189086914,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_6_10.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_6_11.png": {
+      "row": 6,
+      "col": 11,
+      "background_ratio": 0.2692432403564453,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_6_11.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_6_12.png": {
+      "row": 6,
+      "col": 12,
+      "background_ratio": 0.8201131820678711,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_6_12.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_7_6.png": {
+      "row": 7,
+      "col": 6,
+      "background_ratio": 0.5415258407592773,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_7_6.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_7_7.png": {
+      "row": 7,
+      "col": 7,
+      "background_ratio": 0.18132305145263672,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_7_7.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_7_8.png": {
+      "row": 7,
+      "col": 8,
+      "background_ratio": 0.3643331527709961,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_7_8.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_7_9.png": {
+      "row": 7,
+      "col": 9,
+      "background_ratio": 0.8312520980834961,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_7_9.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_7_10.png": {
+      "row": 7,
+      "col": 10,
+      "background_ratio": 0.7246885299682617,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_7_10.yaml"
+    }
+  },
+  {
+    "TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_7_11.png": {
+      "row": 7,
+      "col": 11,
+      "background_ratio": 0.9497137069702148,
+      "intersected_labels": [],
+      "label_ratio": {},
+      "metadata_path": "./metadata/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE_7_11.yaml"
+    }
+  }
+]
