@@ -29,9 +29,7 @@ This repository contains the original **PyTorch** implementation of **NuLite.**
 >The training and inference code are taken from [CellViT] repository.
 > 
 > The goal our this repository as well as the paper is to provide a lightweight model for nuclei instance segmentation and classification.
-> 
-> Therefore, we thank the CellViT authors for their useful training and inference code.
-
+>
 
 ## Repository Structure
 
@@ -238,7 +236,7 @@ You can import your results (.geojson files) into [QuPath](https://qupath.github
 @article{tommasino2024nulite,
   title={NuLite - Lightweight and Fast Model for Nuclei Instance Segmentation and Classification},
   author={Tommasino, Cristian and Russo, Cristiano and Rinaldi, Antonio Maria},
-  journal={arXiv preprint arXiv:},
+  journal={arXiv preprint arXiv: 2408.01797},
   year={2024}
 }
 ```
