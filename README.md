@@ -68,7 +68,7 @@ Below are the main executable scripts in the repository:
 
 
 ## Datasets
-- PanNuke [Fold1](https://warwick.ac.uk/fac/cross_fac/tia/data/pannuke/fold_1.zip), [Fold2](https://warwick.ac.uk/fac/cross_fac/tia/data/pannuke/fold_3.zip), [Fold3](https://warwick.ac.uk/fac/cross_fac/tia/data/pannuke/fold_3.zip) <br />
+- PanNuke [Fold1](https://warwick.ac.uk/fac/cross_fac/tia/data/pannuke/fold_1.zip), [Fold2](https://warwick.ac.uk/fac/cross_fac/tia/data/pannuke/fold_2.zip), [Fold3](https://warwick.ac.uk/fac/cross_fac/tia/data/pannuke/fold_3.zip) <br />
 - CoNSeP [Download](https://warwick.ac.uk/fac/cross_fac/tia/data/hovernet/)
 - MoNuSeg [Train](https://drive.google.com/file/d/1ZgqFJomqQGNnsx7w7QBzQQMVA16lbVCA/view) [Test](https://drive.google.com/file/d/1NKkSQ5T0ZNQ8aUhh0a8Dt2YKYCQXIViw/view)
 - GlySAC [Download](https://drive.google.com/drive/folders/1p0Yt2w8MTcaZJU3bdh0fAtTrPWin1-zb)
