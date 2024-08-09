@@ -1,6 +1,6 @@
 # dataset paths
-wsi_paths: ../../wsi_example/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE.svs
-output_path: .../../wsi_example/inference
+wsi_paths: /work/temp.svs
+output_path: /tmp/nulite_inference/
 
 # basic setups
 patch_size: 1024

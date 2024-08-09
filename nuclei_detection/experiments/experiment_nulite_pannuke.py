@@ -152,7 +152,6 @@ class ExperimentNuLitePanNuke(BaseExperiment):
             pin_memory=True,
             worker_init_fn=self.seed_worker,
         )
-        #wandb.watch(model, log='all')
 
         # start Training
         self.logger.info("Instantiate Trainer")

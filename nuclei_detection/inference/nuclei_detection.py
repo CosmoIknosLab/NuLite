@@ -162,7 +162,6 @@ class CellSegmentationInference:
             num_workers = 16
         num_workers = int(np.clip(num_workers, 1, 2 * batch_size))
 
-
         wsi_inference_dataloader = DataLoader(
             dataset=wsi_inference_dataset,
             batch_size=batch_size,
@@ -314,6 +313,7 @@ class CellSegmentationInference:
                                                    patch_size * patch_size)
 
                     pbar.set_postfix(Cells=cell_count, Memory=f"{memory_usage:.2f} MB")
+                    torch.cuda.empty_cache()
 
         # post processing
         self.logger.info(f"Detected cells before cleaning: {len(cell_dict_wsi)}")
@@ -814,12 +814,6 @@ class InferenceWSIParser:
             help="Model checkpoint file that is used for inference",
             required=True,
         )
-        requiredNamed.add_argument(
-            "--vit_structure",
-            type=str,
-            help="FastViT encoder",
-            required=True,
-        )
         parser.add_argument(
             "--gpu", type=int, help="Cuda-GPU ID for inference. Default: 0", default=0
         )
@@ -834,7 +828,7 @@ class InferenceWSIParser:
             "--batch_size",
             type=int,
             help="Inference batch-size. Default: 8",
-            default=8,
+            default=64,
         )
         parser.add_argument(
             "--outdir_subdir",

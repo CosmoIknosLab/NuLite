@@ -5,17 +5,15 @@ from typing import List, Literal, Tuple
 import numpy as np
 import torch
 import torch.nn as nn
+from torchinfo import summary
 
 from models.encoders.fastvit import FastViTEncoder
 from models.utils import Conv2DBlock
 from nuclei_detection.utils.post_proc_nulite import DetectionCellPostProcessor
 
 
-#from nuclei_detection.utils.post_proc_nulite import DetectionCellPostProcessor
-
-
 class NuLite(nn.Module):
-    """NuLite
+    """NuFastViT
 
     Skip connections are shared between branches, but each network has a distinct encoder
 
@@ -79,15 +77,38 @@ class NuLite(nn.Module):
             "nuclei_type_maps": self.num_nuclei_classes,
         }
 
-        self.nuclei_binary_map_decoder = self.create_upsampling_branch(
-            2 + offset_branches
+        self.decoder = self.create_upsampling_branch()
+        self.np_head = nn.Sequential(
+            Conv2DBlock(2 * self.embed_dims[-4], self.embed_dims[-4], dropout=self.drop_rate),
+            nn.Conv2d(
+                in_channels=self.embed_dims[-4],
+                out_channels=2,
+                kernel_size=1,
+                stride=1,
+                padding=0,
+            ),
         )
-        self.hv_map_decoder = self.create_upsampling_branch(
-            2
+        self.hv_head = nn.Sequential(
+            Conv2DBlock(2 * self.embed_dims[-4], self.embed_dims[-4], dropout=self.drop_rate),
+            nn.Conv2d(
+                in_channels=self.embed_dims[-4],
+                out_channels=2,
+                kernel_size=1,
+                stride=1,
+                padding=0,
+            ),
         )
-        self.nuclei_type_maps_decoder = self.create_upsampling_branch(
-            self.num_nuclei_classes
+        self.tp_head = nn.Sequential(
+            Conv2DBlock(2 * self.embed_dims[-4], self.embed_dims[-4], dropout=self.drop_rate),
+            nn.Conv2d(
+                in_channels=self.embed_dims[-4],
+                out_channels=self.num_nuclei_classes,
+                kernel_size=1,
+                stride=1,
+                padding=0,
+            ),
         )
+
 
     def forward(self, x: torch.Tensor, retrieve_tokens: bool = False):
         """Forward pass
@@ -112,16 +133,14 @@ class NuLite(nn.Module):
 
         z0, z1, z2, z3, z4 = x, *z
 
-        out_dict["nuclei_binary_map"] = self._forward_upsample(
-            z0, z1, z2, z3, z4, self.nuclei_binary_map_decoder
-        )
+        decoder = self._forward_upsample(z1,z2,z3,z4, self.decoder)
 
-        out_dict["hv_map"] = self._forward_upsample(
-            z0, z1, z2, z3, z4, self.hv_map_decoder
-        )
-        out_dict["nuclei_type_map"] = self._forward_upsample(
-            z0, z1, z2, z3, z4, self.nuclei_type_maps_decoder
-        )
+        xt = self.decoder0(x)
+        xt = torch.cat([xt, decoder], dim=1)
+        out_dict["nuclei_binary_map"] = self.np_head(xt)
+
+        out_dict["hv_map"] = self.hv_head(xt)
+        out_dict["nuclei_type_map"] = self.tp_head(xt)
 
         if retrieve_tokens:
             out_dict["tokens"] = z4
@@ -130,7 +149,7 @@ class NuLite(nn.Module):
 
     def _forward_upsample(
             self,
-            z0: torch.Tensor,
+            #z0: torch.Tensor,
             z1: torch.Tensor,
             z2: torch.Tensor,
             z3: torch.Tensor,
@@ -155,11 +174,9 @@ class NuLite(nn.Module):
         b3 = branch_decoder.decoder3_upsampler(torch.cat([z2, b4], dim=1))
         b2 = branch_decoder.decoder2_upsampler(torch.cat([z1, b3], dim=1))
         b1 = branch_decoder.decoder1_upsampler(b2)
-        z0 = self.decoder0(z0)
-        branch_output = branch_decoder.decoder0_header(torch.cat([z0, b1], dim=1))
-        return branch_output
+        return b1
 
-    def create_upsampling_branch(self, num_classes: int) -> nn.Module:
+    def create_upsampling_branch(self) -> nn.Module:
         """Create Upsampling branch
 
         Args:
@@ -230,16 +247,7 @@ class NuLite(nn.Module):
             ),
         )
 
-        decoder0_header = nn.Sequential(
-            Conv2DBlock(2 * self.embed_dims[-4], self.embed_dims[-4], dropout=self.drop_rate),
-            nn.Conv2d(
-                in_channels=self.embed_dims[-4],
-                out_channels=num_classes,
-                kernel_size=1,
-                stride=1,
-                padding=0,
-            ),
-        )
+
 
         decoder = nn.Sequential(
             OrderedDict(
@@ -249,7 +257,6 @@ class NuLite(nn.Module):
                     ("decoder3_upsampler", decoder3_upsampler),
                     ("decoder2_upsampler", decoder2_upsampler),
                     ("decoder1_upsampler", decoder1_upsampler),
-                    ("decoder0_header", decoder0_header),
                 ]
             )
         )
@@ -382,3 +389,11 @@ class NuLite(nn.Module):
 
     def _init_ma36(self):
         self.embed_dims = [76, 152, 304, 608]
+
+
+if __name__ == '__main__':
+
+    x = torch.randn((1, 3, 256, 256)).cuda()
+    model = NuLite(6,19,"fastvit_ma36").cuda()
+    summary(model, (1,3,256,256),device="cuda")
+    #print(model(x))
