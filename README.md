@@ -124,9 +124,9 @@ The preparation script is in the [`nuclei_detection/datasets/`](nuclei_detection
 
 
 Model checkpoints are available for download here:
-- [NuLite-H](https://zenodo.org/records/13167965)
-- [NuLite-M](https://zenodo.org/records/13167892)
-- [NuLite-T](https://zenodo.org/records/13167971)
+- [NuLite-H](https://zenodo.org/records/13272667)
+- [NuLite-M](https://zenodo.org/records/13272705)
+- [NuLite-T](https://zenodo.org/records/13272655)
 
 License: [Apache 2.0 with Commons Clause](./LICENSE)
 
