@@ -3,7 +3,7 @@
 # NuLite - Lightweight and Fast Model for Nuclei Instance Segmentation and Classification
 This repository contains the original **PyTorch** implementation of **NuLite.**
 
-*Tommasino C., Russo C., Rianldi A.M. (2024). NuLite - Lightweight and Fast Model for Nuclei Instance Segmentation and Classification. https://doi.org/10.48550/ARXIV.2306.15350*
+*Tommasino C., Russo C., Rianldi A.M. (2024). NuLite - Lightweight and Fast Model for Nuclei Instance Segmentation and Classification. https://doi.org/10.48550/arXiv.2408.01797*
 
 ![](docs/architecture.png)
 
@@ -235,7 +235,7 @@ You can import your results (.geojson files) into [QuPath](https://qupath.github
 @article{tommasino2024nulite,
   title={NuLite - Lightweight and Fast Model for Nuclei Instance Segmentation and Classification},
   author={Tommasino, Cristian and Russo, Cristiano and Rinaldi, Antonio Maria},
-  journal={arXiv preprint arXiv: 2408.01797},
+  journal={arXiv preprint arXiv:2408.01797},
   year={2024}
 }
 ```
