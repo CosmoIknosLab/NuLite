@@ -3,7 +3,7 @@
 # NuLite - Lightweight and Fast Model for Nuclei Instance Segmentation and Classification
 This repository contains the original **PyTorch** implementation of **NuLite.**
 
-*Tommasino C., Russo C., Rianldi A.M. (2024). NuLite - Lightweight and Fast Model for Nuclei Instance Segmentation and Classification. https://doi.org/10.48550/arXiv.2408.01797*
+*Tommasino, C., Russo, C., & Rinaldi, A. M. (2026). NuLite-lightweight and fast model for nuclei instance segmentation and classification. Biomedical Signal Processing and Control, 114, 109333. https://doi.org/10.1016/j.bspc.2025.109333*
 
 ![](docs/architecture.png)
 
