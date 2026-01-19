@@ -232,11 +232,13 @@ You can import your results (.geojson files) into [QuPath](https://qupath.github
 ## Citation
 
 ```
-@article{tommasino2024nulite,
-  title={NuLite - Lightweight and Fast Model for Nuclei Instance Segmentation and Classification},
-  author={Tommasino, Cristian and Russo, Cristiano and Rinaldi, Antonio Maria},
-  journal={arXiv preprint arXiv:2408.01797},
-  year={2024}
+@ARTICLE{Tommasino2026,
+	author = {Tommasino, Cristian and Russo, Cristiano and Rinaldi, Antonio M.},
+	title = {NuLite - lightweight and fast model for nuclei instance segmentation and classification},
+	year = {2026},
+	journal = {Biomedical Signal Processing and Control},
+	volume = {114},
+	doi = {10.1016/j.bspc.2025.109333},
 }
 ```
 
