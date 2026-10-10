@@ -11,13 +11,22 @@ from typing import Tuple, Union
 
 import torch
 import torch.nn as nn
-#import wandb
 from base_ml.base_early_stopping import EarlyStopping
 from pathlib import Path
 from torch.nn.modules.loss import _Loss
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 from torch.utils.data import DataLoader
+
+from utils.tools import flatten_dict
+
+
+def _create_grad_scaler(enabled: bool):
+    """Create a GradScaler, compatible with torch < 2.3 (torch.cuda.amp) and >= 2.3 (torch.amp)."""
+    try:
+        return torch.amp.GradScaler("cuda", enabled=enabled)
+    except (AttributeError, TypeError):  # pragma: no cover - old torch versions
+        return torch.cuda.amp.GradScaler(enabled=enabled)
 
 
 class BaseTrainer:
@@ -36,8 +45,9 @@ class BaseTrainer:
         early_stopping (EarlyStopping, optional): Early Stopping Class. Defaults to None.
         accum_iter (int, optional): Accumulation steps for gradient accumulation.
             Provide a number greater than 1 for activating gradient accumulation. Defaults to 1.
-        mixed_precision (bool, optional): If mixed-precision should be used. Defaults to False.
-        log_images (bool, optional): If images should be logged to WandB. Defaults to False.
+        mixed_precision (bool, optional): If mixed-precision should be used (autocast + GradScaler).
+            Only effective on CUDA devices. Defaults to False.
+        log_images (bool, optional): If example images should be generated. Defaults to False.
     """
 
     def __init__(
@@ -67,8 +77,9 @@ class BaseTrainer:
         self.start_epoch = 0
         self.experiment_config = experiment_config
         self.log_images = log_images
-        self.scaler = torch.cuda.amp.GradScaler(enabled=True)
-
+        # float16 autocast is only supported on CUDA
+        self.mixed_precision = bool(mixed_precision) and str(device).startswith("cuda")
+        self.scaler = _create_grad_scaler(enabled=self.mixed_precision)
 
     @abstractmethod
     def train_epoch(
@@ -164,17 +175,17 @@ class BaseTrainer:
         """
 
         self.logger.info(f"Starting training, total number of epochs: {epochs}")
-        '''if metric_init is not None and self.start_epoch == 0:
-            wandb.log(metric_init, step=0)'''
         for epoch in range(self.start_epoch, epochs):
             # training epoch
             self.logger.info(f"Epoch: {epoch+1}/{epochs}")
             train_scalar_metrics, train_image_metrics = self.train_epoch(
                 epoch, train_dataloader, **kwargs
             )
-            #wandb.log(train_scalar_metrics, step=epoch + 1)
-            #if self.log_images:
-            #    wandb.log(train_image_metrics, step=epoch + 1)
+            self.logger.debug(f"Train metrics: {train_scalar_metrics}")
+            self.save_image_metrics(train_image_metrics, epoch)
+
+            val_scalar_metrics = None
+            early_stopping_metric = None
             if ((epoch + 1) % eval_every) == 0:
                 # validation epoch
                 (
@@ -182,37 +193,52 @@ class BaseTrainer:
                     val_image_metrics,
                     early_stopping_metric,
                 ) = self.validation_epoch(epoch, val_dataloader)
-                #wandb.log(val_scalar_metrics, step=epoch + 1)
-                #if self.log_images:
-                #    wandb.log(val_image_metrics, step=epoch + 1)
+                self.logger.debug(f"Validation metrics: {val_scalar_metrics}")
+                self.save_image_metrics(val_image_metrics, epoch)
 
             # log learning rate
             curr_lr = self.optimizer.param_groups[0]["lr"]
-            '''wandb.log(
-                {
-                    "Learning-Rate/Learning-Rate": curr_lr,
-                },
-                step=epoch + 1,
-            )'''
-            if (epoch + 1) % eval_every == 0:
+            if early_stopping_metric is not None and self.early_stopping is not None:
                 # early stopping
-                if self.early_stopping is not None:
-                    best_model = self.early_stopping(early_stopping_metric, epoch)
-                    if best_model:
-                        self.logger.info("New best model - save checkpoint")
-                        self.save_checkpoint(epoch, "model_best.pth")
-                    elif self.early_stopping.early_stop:
-                        self.logger.info("Performing early stopping!")
-                        break
+                best_model = self.early_stopping(early_stopping_metric, epoch)
+                if best_model:
+                    self.logger.info("New best model - save checkpoint")
+                    self.save_checkpoint(epoch, "model_best.pth")
+                elif self.early_stopping.early_stop:
+                    self.logger.info("Performing early stopping!")
+                    self.save_checkpoint(epoch, "latest_checkpoint.pth")
+                    break
             self.save_checkpoint(epoch, "latest_checkpoint.pth")
 
             # scheduling
-            if type(self.scheduler) == torch.optim.lr_scheduler.ReduceLROnPlateau:
-                self.scheduler.step(float(val_scalar_metrics["Loss/Validation"]))
+            if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                if val_scalar_metrics is not None:
+                    self.scheduler.step(float(val_scalar_metrics["Loss/Validation"]))
             else:
                 self.scheduler.step()
             new_lr = self.optimizer.param_groups[0]["lr"]
             self.logger.debug(f"Old lr: {curr_lr:.6f} - New lr: {new_lr:.6f}")
+
+    def save_image_metrics(self, image_metrics: dict, epoch: int) -> None:
+        """Store example figures (if any) under logdir/example_images (replaces the former wandb image logging)
+
+        Args:
+            image_metrics (dict): Dictionary name -> matplotlib figure (or None)
+            epoch (int): Current epoch (0-based)
+        """
+        if not image_metrics:
+            return
+        figures = {k: v for k, v in image_metrics.items() if v is not None}
+        if len(figures) == 0:
+            return
+        import matplotlib.pyplot as plt
+
+        image_dir = self.logdir / "example_images"
+        image_dir.mkdir(parents=True, exist_ok=True)
+        for name, fig in figures.items():
+            safe_name = name.replace("/", "_").replace(" ", "_")
+            fig.savefig(image_dir / f"epoch{epoch + 1:03d}_{safe_name}.png")
+            plt.close(fig)
 
     def save_checkpoint(self, epoch: int, checkpoint_name: str):
         if self.early_stopping is None:
@@ -231,8 +257,10 @@ class BaseTrainer:
             "scheduler_state_dict": self.scheduler.state_dict(),
             "best_metric": best_metric,
             "best_epoch": best_epoch,
-            #"config": flatten_dict(wandb.config),
-            #"wandb_id": wandb.run.id,
+            # flattened run configuration ("a.b.c" keys): needed by CellSegmentationInference to rebuild the model
+            "config": flatten_dict(self.experiment_config, sep=".")
+            if self.experiment_config is not None
+            else None,
             "logdir": str(self.logdir.resolve()),
             "run_name": str(Path(self.logdir).name),
             "scaler_state_dict": self.scaler.state_dict()
@@ -257,9 +285,11 @@ class BaseTrainer:
         if self.early_stopping is not None:
             self.early_stopping.best_metric = checkpoint["best_metric"]
             self.early_stopping.best_epoch = checkpoint["best_epoch"]
-        if self.scaler is not None:
+        if self.scaler is not None and checkpoint.get("scaler_state_dict") is not None:
             self.scaler.load_state_dict(checkpoint["scaler_state_dict"])
 
-        self.logger.info(f"Checkpoint epoch: {int(checkpoint['epoch'])}")
-        self.start_epoch = int(checkpoint["epoch"])
+        # checkpoint["epoch"] is the (0-based) index of the last completed epoch
+        completed_epoch = int(checkpoint["epoch"])
+        self.logger.info(f"Checkpoint epoch: {completed_epoch + 1}")
+        self.start_epoch = completed_epoch + 1
         self.logger.info(f"Next epoch is: {self.start_epoch + 1}")

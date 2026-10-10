@@ -31,7 +31,8 @@ def select_dataset(
     Returns:
         Dataset: Cell segmentation dataset
     """
-    assert split.lower() in [
+    split = split.lower()
+    assert split in [
         "train",
         "val",
         "validation",
@@ -41,9 +42,9 @@ def select_dataset(
     if dataset_name.lower() == "pannuke":
         if split == "train":
             folds = dataset_config["train_folds"]
-        if split == "val" or split == "validation":
+        elif split in ("val", "validation"):
             folds = dataset_config["val_folds"]
-        if split == "test":
+        else:
             folds = dataset_config["test_folds"]
         dataset = PanNukeDataset(
             dataset_path=dataset_config["dataset_path"],
@@ -51,7 +52,8 @@ def select_dataset(
             transforms=transforms,
             stardist=dataset_config.get("stardist", False),
             regression=dataset_config.get("regression_loss", False),
-            cache_dataset=True,
+            # caching only helps with persistent dataloader workers, see experiment setup
+            cache_dataset=dataset_config.get("cache_dataset", False),
         )
     else:
         raise NotImplementedError(f"Unknown dataset: {dataset_name}")

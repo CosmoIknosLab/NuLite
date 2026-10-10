@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# CellViT Trainer Class
+# NuLite Trainer Class (adapted from the CellViT trainer)
 #
 # @ Fabian Hörst, fabian.hoerst@uk-essen.de
 # Institute for Artifical Intelligence in Medicine,
@@ -16,27 +16,23 @@ import tqdm
 
 from matplotlib import pyplot as plt
 from skimage.color import rgba2rgb
-from sklearn.metrics import accuracy_score
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 from torch.utils.data import DataLoader
-from torchmetrics.functional import dice
-from torchmetrics.functional.classification import binary_jaccard_index
 
 from base_ml.base_early_stopping import EarlyStopping
 from base_ml.base_trainer import BaseTrainer
 
 from models.nulite import NuLite
-from nuclei_detection.utils.metrics import remap_label, get_fast_pq
 from nuclei_detection.utils.tools import cropping_center
 from utils.tools import AverageMeter, DataclassHVStorage
 
 
 class NuLiteTrainer(BaseTrainer):
-    """CellViT trainer class
+    """NuLite trainer class
 
     Args:
-        model (CellViT): CellViT model that should be trained
+        model (NuLite): NuLite model that should be trained
         loss_fn_dict (dict): Dictionary with loss functions for each branch with a dictionary of loss functions.
             Name of branch as top-level key, followed by a dictionary with loss name, loss fn and weighting factor
             Example:
@@ -62,9 +58,9 @@ class NuLiteTrainer(BaseTrainer):
             * "nuclei_types": describing the present nuclei types with corresponding integer
         experiment_config (dict): Configuration of this experiment
         early_stopping (EarlyStopping, optional):  Early Stopping Class. Defaults to None.
-        log_images (bool, optional): If images should be logged to WandB. Defaults to False.
+        log_images (bool, optional): If example images should be generated. Defaults to False.
         magnification (int, optional): Image magnification. Please select either 40 or 20. Defaults to 40.
-        mixed_precision (bool, optional): If mixed-precision should be used. Defaults to False.
+        mixed_precision (bool, optional): If mixed-precision (autocast + GradScaler) should be used. Defaults to True.
     """
 
     def __init__(
@@ -82,6 +78,7 @@ class NuLiteTrainer(BaseTrainer):
             early_stopping: EarlyStopping = None,
             log_images: bool = False,
             magnification: int = 40,
+            mixed_precision: bool = True,
     ):
         super().__init__(
             model=model,
@@ -94,6 +91,7 @@ class NuLiteTrainer(BaseTrainer):
             experiment_config=experiment_config,
             early_stopping=early_stopping,
             accum_iter=1,
+            mixed_precision=mixed_precision,
             log_images=log_images,
         )
         self.loss_fn_dict = loss_fn_dict
@@ -111,7 +109,15 @@ class NuLiteTrainer(BaseTrainer):
                 self.loss_avg_tracker[f"{branch}_{loss_name}"] = AverageMeter(
                     f"{branch}_{loss_name}", ":.4f"
                 )
-        self.batch_avg_tissue_acc = AverageMeter("Batch_avg_tissue_ACC", ":4.f")
+        self.batch_avg_tissue_acc = AverageMeter("Batch_avg_tissue_ACC", ":.4f")
+
+    def _reset_trackers(self) -> None:
+        """Reset all running averages (called at the beginning of each epoch)"""
+        self.loss_avg_tracker["Total_Loss"].reset()
+        for branch, loss_fns in self.loss_fn_dict.items():
+            for loss_name in loss_fns:
+                self.loss_avg_tracker[f"{branch}_{loss_name}"].reset()
+        self.batch_avg_tissue_acc.reset()
 
     def train_epoch(
             self, epoch: int, train_dataloader: DataLoader, unfreeze_epoch: int = 50
@@ -121,22 +127,16 @@ class NuLiteTrainer(BaseTrainer):
         Args:
             epoch (int): Current epoch number
             train_dataloader (DataLoader): Train dataloader
-            unfreeze_epoch (int, optional): Epoch to unfreeze layers
+            unfreeze_epoch (int, optional): Epoch to unfreeze layers (kept for config compatibility, unused)
         Returns:
-            Tuple[dict, dict]: wandb logging dictionaries
+            Tuple[dict, dict]: logging dictionaries
                 * Scalar metrics
                 * Image metrics
         """
         self.model.train()
 
         train_example_img = None
-
-        # reset metrics
-        self.loss_avg_tracker["Total_Loss"].reset()
-        for branch, loss_fns in self.loss_fn_dict.items():
-            for loss_name in loss_fns:
-                self.loss_avg_tracker[f"{branch}_{loss_name}"].reset()
-        self.batch_avg_tissue_acc.reset()
+        self._reset_trackers()
 
         # randomly select a batch that should be displayed
         if self.log_images:
@@ -188,19 +188,19 @@ class NuLiteTrainer(BaseTrainer):
             batch (object): Training batch, consisting of images ([0]), masks ([1]), tissue_types ([2]) and figure filenames ([3])
             batch_idx (int): Batch index
             num_batches (int): Total number of batches in epoch
-            return_example_images (bool): If an example preciction image should be returned
+            return_example_images (bool): If an example prediction image should be returned
 
         Returns:
-            Tuple[dict, Union[plt.Figure, None]]:
-                * Batch-Metrics: dictionary with the following keys:
-                * Example prediction image
+            Union[plt.Figure, None]: Example prediction image (if requested)
         """
         # unpack batch
         imgs = batch[0].to(self.device)  # imgs shape: (batch_size, 3, H, W)
         masks = batch[1]  # dict: keys: "instance_map", "nuclei_map", "nuclei_binary_map", "hv_map"
         tissue_types = batch[2]  # list[str]
 
-        with torch.autocast(device_type="cuda", dtype=torch.float16):
+        with torch.autocast(
+            device_type="cuda", dtype=torch.float16, enabled=self.mixed_precision
+        ):
             # make predictions
             predictions_ = self.model.forward(imgs)
             # reshaping and postprocessing
@@ -208,30 +208,19 @@ class NuLiteTrainer(BaseTrainer):
             gt = self.unpack_masks(masks=masks, tissue_types=tissue_types)
             # calculate loss
             total_loss = self.calculate_loss(predictions, gt)
-            # backward pass
-            self.scaler.scale(total_loss).backward()
 
-            if (
-                    ((batch_idx + 1) % self.accum_iter == 0)
-                    or ((batch_idx + 1) == num_batches)
-                    or (self.accum_iter == 1)
-            ):
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
-                self.optimizer.zero_grad(set_to_none=True)
-                self.model.zero_grad()
+        # backward pass (outside the autocast region, as recommended by PyTorch)
+        self.scaler.scale(total_loss).backward()
+
+        if ((batch_idx + 1) % self.accum_iter == 0) or ((batch_idx + 1) == num_batches):
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+            self.optimizer.zero_grad(set_to_none=True)
 
         if return_example_images:
-            return_example_images = self.generate_example_image(
-                imgs, predictions, gt, num_images=4, num_nuclei_classes=self.num_classes
-            )
-        else:
-            return_example_images = None
+            return self._generate_example_image_safe(imgs, predictions, gt)
+        return None
 
-        # return batch_metrics, return_example_images
-        return return_example_images
-
-    #
     def validation_epoch(
             self, epoch: int, val_dataloader: DataLoader
     ) -> Tuple[dict, dict, float]:
@@ -242,20 +231,14 @@ class NuLiteTrainer(BaseTrainer):
             val_dataloader (DataLoader): Validation dataloader
 
         Returns:
-            Tuple[dict, dict, float]: wandb logging dictionaries
+            Tuple[dict, dict, float]: logging dictionaries
                 * Scalar metrics
                 * Image metrics
-                * Early stopping metric
+                * Early stopping metric (validation loss)
         """
         self.model.eval()
         val_example_img = None
-
-        # reset metrics
-        self.loss_avg_tracker["Total_Loss"].reset()
-        for branch, loss_fns in self.loss_fn_dict.items():
-            for loss_name in loss_fns:
-                self.loss_avg_tracker[f"{branch}_{loss_name}"].reset()
-        self.batch_avg_tissue_acc.reset()
+        self._reset_trackers()
 
         # randomly select a batch that should be displayed
         if self.log_images:
@@ -267,8 +250,6 @@ class NuLiteTrainer(BaseTrainer):
 
         with torch.no_grad():
             for batch_idx, batch in val_loop:
-                if batch_idx == 58:
-                    print()
                 return_example_images = batch_idx == select_example_image
                 example_img = self.validation_step(
                     batch, batch_idx, return_example_images
@@ -278,7 +259,6 @@ class NuLiteTrainer(BaseTrainer):
                 val_loop.set_postfix(
                     {
                         "Loss": np.round(self.loss_avg_tracker["Total_Loss"].avg, 3),
-
                     }
                 )
 
@@ -298,29 +278,27 @@ class NuLiteTrainer(BaseTrainer):
         )
 
         image_metrics = {"Example-Predictions/Validation": val_example_img}
-        return scalar_metrics, image_metrics, self.loss_avg_tracker['Total_Loss'].avg  # , np.nanmean(pq_scores)
+        return scalar_metrics, image_metrics, self.loss_avg_tracker["Total_Loss"].avg
 
     def validation_step(self, batch: object, batch_idx: int, return_example_images: bool):
         """Validation step
 
         Args:
-            batch (object): Training batch, consisting of images ([0]), masks ([1]), tissue_types ([2]) and figure filenames ([3])
+            batch (object): Validation batch, consisting of images ([0]), masks ([1]), tissue_types ([2]) and figure filenames ([3])
             batch_idx (int): Batch index
-            return_example_images (bool): If an example preciction image should be returned
+            return_example_images (bool): If an example prediction image should be returned
 
         Returns:
-            Tuple[dict, Union[plt.Figure, None]]:
-                * Batch-Metrics: dictionary, structure not fixed yet
-                * Example prediction image
+            Union[plt.Figure, None]: Example prediction image (if requested)
         """
         # unpack batch, for shape compare train_step method
         imgs = batch[0].to(self.device)
         masks = batch[1]
         tissue_types = batch[2]
 
-        self.model.zero_grad()
-        self.optimizer.zero_grad()
-        with torch.autocast(device_type="cuda", dtype=torch.float16):
+        with torch.autocast(
+            device_type="cuda", dtype=torch.float16, enabled=self.mixed_precision
+        ):
             # make predictions
             predictions_ = self.model.forward(imgs)
             # reshaping and postprocessing
@@ -330,24 +308,41 @@ class NuLiteTrainer(BaseTrainer):
             _ = self.calculate_loss(predictions, gt)
 
         if return_example_images:
-            try:
-                return_example_images = self.generate_example_image(
-                    imgs,
-                    predictions,
-                    gt,
-                    num_images=4,
-                    num_nuclei_classes=self.num_classes,
-                )
-            except AssertionError:
-                self.logger.error(
-                    "AssertionError for Example Image. Please check. Continue without image."
-                )
-                return_example_images = None
-        else:
-            return_example_images = None
+            return self._generate_example_image_safe(imgs, predictions, gt)
+        return None
 
-        # return batch_metrics, return_example_images
-        return return_example_images
+    def _generate_example_image_safe(
+            self, imgs: torch.Tensor, predictions: DataclassHVStorage, gt: DataclassHVStorage
+    ) -> Union[plt.Figure, None]:
+        """Compute instance maps and generate the example figure; never let plotting break the training."""
+        try:
+            self._add_instance_maps(predictions)
+            return self.generate_example_image(
+                imgs, predictions, gt, num_images=4, num_nuclei_classes=self.num_classes
+            )
+        except Exception as exc:  # plotting is best-effort
+            self.logger.error(f"Could not generate example image, continuing without it: {exc}")
+            return None
+
+    def _add_instance_maps(self, predictions: DataclassHVStorage) -> None:
+        """Run the (CPU) post-processing to add instance maps to the predictions (needed for plotting only)
+
+        Args:
+            predictions (DataclassHVStorage): Predictions with softmax outputs
+        """
+        pred_dict = {
+            "nuclei_binary_map": predictions.nuclei_binary_map.detach().float(),
+            "nuclei_type_map": predictions.nuclei_type_map.detach().float(),
+            "hv_map": predictions.hv_map.detach().float(),
+        }
+        instance_map, instance_types = self.model.calculate_instance_map(
+            pred_dict, magnification=self.magnification
+        )
+        predictions.instance_map = instance_map
+        predictions.instance_types = instance_types
+        predictions.instance_types_nuclei = self.model.generate_instance_nuclei_map(
+            instance_map, instance_types
+        )
 
     def unpack_predictions(self, predictions: dict) -> DataclassHVStorage:
         """Unpack the given predictions. Main focus lays on reshaping and postprocessing predictions, e.g. separating instances
@@ -362,7 +357,6 @@ class NuLiteTrainer(BaseTrainer):
         Returns:
             DataclassHVStorage: Processed network output
         """
-        predictions["tissue_types"] = predictions["tissue_types"].to(self.device)
         predictions["nuclei_binary_map"] = F.softmax(
             predictions["nuclei_binary_map"], dim=1
         )  # shape: (batch_size, 2, H, W)
@@ -370,21 +364,16 @@ class NuLiteTrainer(BaseTrainer):
             predictions["nuclei_type_map"], dim=1
         )  # shape: (batch_size, num_nuclei_classes, H, W)
 
-        predictions["instance_map"], predictions["instance_types"] = None, None
-        predictions["instance_types_nuclei"] = None
-        if "regression_map" not in predictions.keys():
-            predictions["regression_map"] = None
-
         predictions = DataclassHVStorage(
             nuclei_binary_map=predictions["nuclei_binary_map"],
             hv_map=predictions["hv_map"],
             nuclei_type_map=predictions["nuclei_type_map"],
             tissue_types=predictions["tissue_types"],
-            instance_map=predictions["instance_map"],
-            instance_types=predictions["instance_types"],
-            instance_types_nuclei=predictions["instance_types_nuclei"],
+            instance_map=None,
+            instance_types=None,
+            instance_types_nuclei=None,
             batch_size=predictions["tissue_types"].shape[0],
-            regression_map=predictions["regression_map"],
+            regression_map=predictions.get("regression_map", None),
             num_nuclei_classes=self.num_classes,
         )
 
@@ -398,8 +387,7 @@ class NuLiteTrainer(BaseTrainer):
                 * instance_map: Pixel-wise nuclear instance segmentations. Shape: (batch_size, H, W)
                 * nuclei_binary_map: Binary nuclei segmentations. Shape: (batch_size, H, W)
                 * hv_map: HV-Map. Shape: (batch_size, 2, H, W)
-                * nuclei_type_map: Nuclei instance-prediction and segmentation (not binary, each instance has own integer).
-                    Shape: (batch_size, num_nuclei_classes, H, W)
+                * nuclei_type_map: Nuclei type map (integer class per pixel). Shape: (batch_size, H, W)
 
             tissue_types (list): List of string names of ground-truth tissue types
 
@@ -412,7 +400,8 @@ class NuLiteTrainer(BaseTrainer):
         ).type(
             torch.float32
         )  # background, nuclei
-        nuclei_type_maps = torch.squeeze(masks["nuclei_type_map"]).type(torch.int64)
+        # (B, H, W) -> do not squeeze: a batch of size 1 would lose its batch dimension
+        nuclei_type_maps = masks["nuclei_type_map"].type(torch.int64)
         gt_nuclei_type_maps_onehot = F.one_hot(
             nuclei_type_maps, num_classes=self.num_classes
         ).type(
@@ -423,11 +412,11 @@ class NuLiteTrainer(BaseTrainer):
         gt = {
             "nuclei_type_map": gt_nuclei_type_maps_onehot.permute(0, 3, 1, 2).to(
                 self.device
-            ),  # shape: (batch_size, H, W, num_nuclei_classes)
+            ),  # shape: (batch_size, num_nuclei_classes, H, W)
             "nuclei_binary_map": gt_nuclei_binary_map_onehot.permute(0, 3, 1, 2).to(
                 self.device
-            ),  # shape: (batch_size, H, W, 2)
-            "hv_map": masks["hv_map"].to(self.device),  # shape: (batch_size, H, W, 2)
+            ),  # shape: (batch_size, 2, H, W)
+            "hv_map": masks["hv_map"].to(self.device),  # shape: (batch_size, 2, H, W)
             "instance_map": masks["instance_map"].to(
                 self.device
             ),  # shape: (batch_size, H, W) -> each instance has one integer
@@ -491,8 +480,8 @@ class NuLiteTrainer(BaseTrainer):
                     )
                 else:
                     loss_value = loss_fn(input=pred, target=gt[branch])
-                if loss_value.isnan().cpu().numpy() == True:
-                    print(loss_name, loss_value)
+                if torch.isnan(loss_value).any():
+                    self.logger.warning(f"NaN loss encountered: {branch}/{loss_name}")
                 total_loss = total_loss + weight * loss_value
                 self.loss_avg_tracker[f"{branch}_{loss_name}"].update(
                     loss_value.detach().cpu().numpy()
@@ -500,191 +489,6 @@ class NuLiteTrainer(BaseTrainer):
         self.loss_avg_tracker["Total_Loss"].update(total_loss.detach().cpu().numpy())
 
         return total_loss
-
-    def calculate_step_metric_train(
-            self, predictions: DataclassHVStorage, gt: DataclassHVStorage
-    ) -> dict:
-        """Calculate the metrics for the training step
-
-        Args:
-            predictions (DataclassHVStorage): Processed network output
-            gt (DataclassHVStorage): Ground truth values
-        Returns:
-            dict: Dictionary with metrics. Keys:
-                binary_dice_scores, binary_jaccard_scores, tissue_pred, tissue_gt
-        """
-        predictions = predictions.get_dict()
-        gt = gt.get_dict()
-
-        # Tissue Tpyes logits to probs and argmax to get class
-        predictions["tissue_types_classes"] = F.softmax(
-            predictions["tissue_types"], dim=-1
-        )
-        pred_tissue = (
-            torch.argmax(predictions["tissue_types_classes"], dim=-1)
-            .detach()
-            .cpu()
-            .numpy()
-            .astype(np.uint8)
-        )
-        predictions["instance_map"] = predictions["instance_map"].detach().cpu()
-        predictions["instance_types_nuclei"] = (
-            predictions["instance_types_nuclei"].detach().cpu().numpy().astype("int32")
-        )
-        gt["tissue_types"] = gt["tissue_types"].detach().cpu().numpy().astype(np.uint8)
-        gt["nuclei_binary_map"] = torch.argmax(gt["nuclei_binary_map"], dim=1).type(
-            torch.uint8
-        )
-        gt["instance_types_nuclei"] = (
-            gt["instance_types_nuclei"].detach().cpu().numpy().astype("int32")
-        )
-
-        tissue_detection_accuracy = accuracy_score(
-            y_true=gt["tissue_types"], y_pred=pred_tissue
-        )
-        self.batch_avg_tissue_acc.update(tissue_detection_accuracy)
-
-        binary_dice_scores = []
-        binary_jaccard_scores = []
-
-        for i in range(len(pred_tissue)):
-            # binary dice score: Score for cell detection per image, without background
-            pred_binary_map = torch.argmax(predictions["nuclei_binary_map"][i], dim=0)
-            target_binary_map = gt["nuclei_binary_map"][i]
-            cell_dice = (
-                dice(preds=pred_binary_map, target=target_binary_map, ignore_index=0)
-                .detach()
-                .cpu()
-            )
-            binary_dice_scores.append(float(cell_dice))
-
-            # binary aji
-            cell_jaccard = (
-                binary_jaccard_index(
-                    preds=pred_binary_map,
-                    target=target_binary_map,
-                )
-                .detach()
-                .cpu()
-            )
-            binary_jaccard_scores.append(float(cell_jaccard))
-
-        batch_metrics = {
-            "binary_dice_scores": binary_dice_scores,
-            "binary_jaccard_scores": binary_jaccard_scores,
-            "tissue_pred": pred_tissue,
-            "tissue_gt": gt["tissue_types"],
-        }
-
-        return batch_metrics
-
-    def calculate_step_metric_validation(self, predictions: dict, gt: dict) -> dict:
-        """Calculate the metrics for the training step
-
-        Args:
-            predictions (DataclassHVStorage): OrderedDict: Processed network output
-            gt (DataclassHVStorage): Ground truth values
-        Returns:
-            dict: Dictionary with metrics. Keys:
-                binary_dice_scores, binary_jaccard_scores, tissue_pred, tissue_gt
-        """
-        predictions = predictions.get_dict()
-        gt = gt.get_dict()
-
-        # Tissue Tpyes logits to probs and argmax to get class
-        predictions["tissue_types_classes"] = F.softmax(
-            predictions["tissue_types"], dim=-1
-        )
-        pred_tissue = (
-            torch.argmax(predictions["tissue_types_classes"], dim=-1)
-            .detach()
-            .cpu()
-            .numpy()
-            .astype(np.uint8)
-        )
-        predictions["instance_map"] = predictions["instance_map"].detach().cpu()
-        predictions["instance_types_nuclei"] = (
-            predictions["instance_types_nuclei"].detach().cpu().numpy().astype("int32")
-        )
-        instance_maps_gt = gt["instance_map"].detach().cpu()
-        gt["tissue_types"] = gt["tissue_types"].detach().cpu().numpy().astype(np.uint8)
-        gt["nuclei_binary_map"] = torch.argmax(gt["nuclei_binary_map"], dim=1).type(
-            torch.uint8
-        )
-        gt["instance_types_nuclei"] = (
-            gt["instance_types_nuclei"].detach().cpu().numpy().astype("int32")
-        )
-
-        tissue_detection_accuracy = accuracy_score(
-            y_true=gt["tissue_types"], y_pred=pred_tissue
-        )
-        self.batch_avg_tissue_acc.update(tissue_detection_accuracy)
-
-        binary_dice_scores = []
-        binary_jaccard_scores = []
-        cell_type_pq_scores = []
-        pq_scores = []
-
-        for i in range(len(pred_tissue)):
-            # binary dice score: Score for cell detection per image, without background
-            pred_binary_map = torch.argmax(predictions["nuclei_binary_map"][i], dim=0)
-            target_binary_map = gt["nuclei_binary_map"][i]
-            cell_dice = (
-                dice(preds=pred_binary_map, target=target_binary_map, ignore_index=0)
-                .detach()
-                .cpu()
-            )
-            binary_dice_scores.append(float(cell_dice))
-
-            # binary aji
-            cell_jaccard = (
-                binary_jaccard_index(
-                    preds=pred_binary_map,
-                    target=target_binary_map,
-                )
-                .detach()
-                .cpu()
-            )
-            binary_jaccard_scores.append(float(cell_jaccard))
-            # pq values
-            remapped_instance_pred = remap_label(predictions["instance_map"][i])
-            remapped_gt = remap_label(instance_maps_gt[i])
-            [_, _, pq], _ = get_fast_pq(true=remapped_gt, pred=remapped_instance_pred)
-            pq_scores.append(pq)
-
-            # pq values per class (skip background)
-            nuclei_type_pq = []
-            for j in range(0, self.num_classes):
-                pred_nuclei_instance_class = remap_label(
-                    predictions["instance_types_nuclei"][i][j, ...]
-                )
-                target_nuclei_instance_class = remap_label(
-                    gt["instance_types_nuclei"][i][j, ...]
-                )
-
-                # if ground truth is empty, skip from calculation
-                if len(np.unique(target_nuclei_instance_class)) == 1:
-                    pq_tmp = np.nan
-                else:
-                    [_, _, pq_tmp], _ = get_fast_pq(
-                        pred_nuclei_instance_class,
-                        target_nuclei_instance_class,
-                        match_iou=0.5,
-                    )
-                nuclei_type_pq.append(pq_tmp)
-
-            cell_type_pq_scores.append(nuclei_type_pq)
-
-        batch_metrics = {
-            "binary_dice_scores": binary_dice_scores,
-            "binary_jaccard_scores": binary_jaccard_scores,
-            "pq_scores": pq_scores,
-            "cell_type_pq_scores": cell_type_pq_scores,
-            "tissue_pred": pred_tissue,
-            "tissue_gt": gt["tissue_types"],
-        }
-
-        return batch_metrics
 
     @staticmethod
     def generate_example_image(
@@ -699,7 +503,7 @@ class NuLiteTrainer(BaseTrainer):
         Args:
             imgs (Union[torch.Tensor, np.ndarray]): Images to process, a random number (num_images) is selected from this stack
                 Shape: (batch_size, 3, H', W')
-            predictions (DataclassHVStorage): Predictions
+            predictions (DataclassHVStorage): Predictions. instance_map must be set (see _add_instance_maps)
             gt (DataclassHVStorage): gt
             num_nuclei_classes (int): Number of total nuclei classes including background
             num_images (int, optional): Number of example patches to display. Defaults to 2.
@@ -710,8 +514,8 @@ class NuLiteTrainer(BaseTrainer):
         predictions = predictions.get_dict()
         gt = gt.get_dict()
 
-        assert num_images <= imgs.shape[0]
-        num_images = 4
+        assert predictions["instance_map"] is not None, "Instance maps must be computed before plotting"
+        num_images = int(min(num_images, imgs.shape[0]))
 
         predictions["nuclei_binary_map"] = predictions["nuclei_binary_map"].permute(
             0, 2, 3, 1
@@ -720,15 +524,10 @@ class NuLiteTrainer(BaseTrainer):
         predictions["nuclei_type_map"] = predictions["nuclei_type_map"].permute(
             0, 2, 3, 1
         )
-        predictions["instance_types_nuclei"] = predictions[
-            "instance_types_nuclei"
-        ].transpose(0, 2, 3, 1)
 
+        gt["nuclei_binary_map"] = gt["nuclei_binary_map"].permute(0, 2, 3, 1)
         gt["hv_map"] = gt["hv_map"].permute(0, 2, 3, 1)
         gt["nuclei_type_map"] = gt["nuclei_type_map"].permute(0, 2, 3, 1)
-        predictions["instance_types_nuclei"] = predictions[
-            "instance_types_nuclei"
-        ].transpose(0, 2, 3, 1)
 
         h = gt["hv_map"].shape[1]
         w = gt["hv_map"].shape[2]
@@ -736,19 +535,24 @@ class NuLiteTrainer(BaseTrainer):
         sample_indices = torch.randint(0, imgs.shape[0], (num_images,))
         # convert to rgb and crop to selection
         sample_images = (
-            imgs[sample_indices].permute(0, 2, 3, 1).contiguous().cpu().numpy()
+            imgs[sample_indices].permute(0, 2, 3, 1).contiguous().cpu().float().numpy()
         )  # convert to rgb
         sample_images = cropping_center(sample_images, (h, w), True)
+        # images are normalized: rescale each one to [0, 1] for display
+        img_min = sample_images.min(axis=(1, 2, 3), keepdims=True)
+        img_max = sample_images.max(axis=(1, 2, 3), keepdims=True)
+        sample_images = (sample_images - img_min) / (img_max - img_min + 1e-10)
 
         # get predictions
         pred_sample_binary_map = (
             predictions["nuclei_binary_map"][sample_indices, :, :, 1]
             .detach()
             .cpu()
+            .float()
             .numpy()
         )
         pred_sample_hv_map = (
-            predictions["hv_map"][sample_indices].detach().cpu().numpy()
+            predictions["hv_map"][sample_indices].detach().cpu().float().numpy()
         )
         pred_sample_instance_maps = (
             predictions["instance_map"][sample_indices].detach().cpu().numpy()
@@ -762,7 +566,7 @@ class NuLiteTrainer(BaseTrainer):
 
         # get ground truth labels
         gt_sample_binary_map = (
-            gt["nuclei_binary_map"][sample_indices].detach().cpu().numpy()
+            gt["nuclei_binary_map"][sample_indices, :, :, 1].detach().cpu().numpy()
         )
         gt_sample_hv_map = gt["hv_map"][sample_indices].detach().cpu().numpy()
         gt_sample_instance_map = (
@@ -780,8 +584,12 @@ class NuLiteTrainer(BaseTrainer):
         binary_cmap = plt.get_cmap("jet")
         instance_map = plt.get_cmap("viridis")
 
+        def _normalize(arr: np.ndarray) -> np.ndarray:
+            return (arr - np.min(arr)) / (np.max(arr) - np.min(arr) + 1e-10)
+
         # setup plot
         fig, axs = plt.subplots(num_images, figsize=(6, 2 * num_images), dpi=150)
+        axs = np.atleast_1d(axs)
 
         for i in range(num_images):
             placeholder = np.zeros((2 * h, 6 * w, 3))
@@ -790,11 +598,11 @@ class NuLiteTrainer(BaseTrainer):
             placeholder[h: 2 * h, :w, :3] = sample_images[i]
             # binary prediction
             placeholder[:h, w: 2 * w, :3] = rgba2rgb(
-                binary_cmap(gt_sample_binary_map[i] * 255)
+                binary_cmap(gt_sample_binary_map[i])
             )
             placeholder[h: 2 * h, w: 2 * w, :3] = rgba2rgb(
                 binary_cmap(pred_sample_binary_map[i])
-            )  # *255?
+            )
             # hv maps
             placeholder[:h, 2 * w: 3 * w, :3] = rgba2rgb(
                 hv_cmap((gt_sample_hv_map[i, :, :, 0] + 1) / 2)
@@ -810,25 +618,10 @@ class NuLiteTrainer(BaseTrainer):
             )
             # instance_predictions
             placeholder[:h, 4 * w: 5 * w, :3] = rgba2rgb(
-                instance_map(
-                    (gt_sample_instance_map[i] - np.min(gt_sample_instance_map[i]))
-                    / (
-                            np.max(gt_sample_instance_map[i])
-                            - np.min(gt_sample_instance_map[i] + 1e-10)
-                    )
-                )
+                instance_map(_normalize(gt_sample_instance_map[i]))
             )
             placeholder[h: 2 * h, 4 * w: 5 * w, :3] = rgba2rgb(
-                instance_map(
-                    (
-                            pred_sample_instance_maps[i]
-                            - np.min(pred_sample_instance_maps[i])
-                    )
-                    / (
-                            np.max(pred_sample_instance_maps[i])
-                            - np.min(pred_sample_instance_maps[i] + 1e-10)
-                    )
-                )
+                instance_map(_normalize(pred_sample_instance_maps[i]))
             )
             # type_predictions
             placeholder[:h, 5 * w: 6 * w, :3] = rgba2rgb(

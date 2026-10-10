@@ -49,13 +49,11 @@ class ExperimentBaseParser:
             "--config", type=str, help="Path to a config file", required=True
         )
         parser.add_argument("--gpu", type=int, help="Cuda-GPU ID")
-        group = parser.add_mutually_exclusive_group(required=False)
-        group.add_argument(
+        parser.add_argument(
             "--checkpoint",
             type=str,
             help="Path to a PyTorch checkpoint file. "
             "The file is loaded and continued to train with the provided settings. "
-            "If this is passed, no sweeps are possible. "
             "This parameter cannot be set in the config file!",
         )
 
@@ -74,30 +72,15 @@ class ExperimentBaseParser:
             yaml_config_dict = dict(yaml_config)
 
         opt_dict = vars(opt)
-        # check for gpu to overwrite with cli argument
-        if "gpu" in opt_dict:
-            if opt_dict["gpu"] is not None:
-                yaml_config_dict["gpu"] = opt_dict["gpu"]
+        # the cli gpu argument overwrites the config file
+        if opt_dict.get("gpu") is not None:
+            yaml_config_dict["gpu"] = opt_dict["gpu"]
 
-        # check if either training, sweep, checkpoint or start agent should be called
-        # first step: remove such keys from the config file
-        if "run_sweep" in yaml_config_dict:
-            yaml_config_dict.pop("run_sweep")
-        if "agent" in yaml_config_dict:
-            yaml_config_dict.pop("agent")
-        if "checkpoint" in yaml_config_dict:
-            yaml_config_dict.pop("checkpoint")
-
-        # select one of the options
-        if "sweep" in opt_dict and opt_dict["sweep"] is True:
-            yaml_config_dict["run_sweep"] = True
-        else:
-            yaml_config_dict["run_sweep"] = False
-        if "agent" in opt_dict:
-            yaml_config_dict["agent"] = opt_dict["agent"]
-        if "checkpoint" in opt_dict:
-            if opt_dict["checkpoint"] is not None:
-                yaml_config_dict["checkpoint"] = opt_dict["checkpoint"]
+        # a checkpoint can only be passed via cli; legacy wandb sweep keys are ignored
+        for legacy_key in ("run_sweep", "agent", "checkpoint"):
+            yaml_config_dict.pop(legacy_key, None)
+        if opt_dict.get("checkpoint") is not None:
+            yaml_config_dict["checkpoint"] = opt_dict["checkpoint"]
 
         self.config = yaml_config_dict
 

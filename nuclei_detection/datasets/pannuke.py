@@ -10,11 +10,8 @@
 
 
 import logging
-import sys  # remove
 from pathlib import Path
 from typing import Callable, Tuple, Union
-
-sys.path.append("/homes/fhoerst/histo-projects/CellViT/")  # remove
 
 import numpy as np
 import pandas as pd
@@ -88,7 +85,7 @@ class PanNukeDataset(CellDataset):
 
                 else:
                     logger.debug(
-                        "Found image {fold_image}, but no corresponding annotation file!"
+                        f"Found image {fold_image}, but no corresponding annotation file!"
                     )
             fold_types = pd.read_csv(self.dataset / f"fold{fold}" / "types.csv")
             fold_type_dict = fold_types.set_index("img")["type"].to_dict()
@@ -247,7 +244,8 @@ class PanNukeDataset(CellDataset):
             cell_count = pd.read_csv(csv_path, index_col=0)
             df_placeholder.append(cell_count)
         self.cell_count = pd.concat(df_placeholder)
-        self.cell_count = self.cell_count.reindex(self.img_names)
+        # align to the loaded images; images missing from the csv get a count of 0
+        self.cell_count = self.cell_count.reindex(self.img_names).fillna(0)
 
     def get_sampling_weights_tissue(self, gamma: float = 1) -> torch.Tensor:
         """Get sampling weights calculated by tissue type statistics
@@ -300,9 +298,10 @@ class PanNukeDataset(CellDataset):
         """
         assert 0 <= gamma <= 1, "Gamma must be between 0 and 1"
         assert hasattr(self, "cell_count"), "Please run .load_cell_count() in advance!"
-        binary_weight_factors = np.array([4191, 4132, 6140, 232, 1528])
-        k = np.sum(binary_weight_factors)
         cell_counts_imgs = np.clip(self.cell_count.to_numpy(), 0, 1)
+        # number of images containing each nuclei type (computed on the loaded folds)
+        binary_weight_factors = np.maximum(cell_counts_imgs.sum(axis=0), 1)
+        k = np.sum(binary_weight_factors)
         weight_vector = k / (gamma * binary_weight_factors + (1 - gamma) * k)
         img_weight = (1 - gamma) * np.max(cell_counts_imgs, axis=-1) + gamma * np.sum(
             cell_counts_imgs * weight_vector, axis=-1
@@ -364,7 +363,7 @@ class PanNukeDataset(CellDataset):
                 inst_box[2] -= 2
             if inst_box[1] <= orig_inst_map.shape[0] - 2:
                 inst_box[1] += 2
-            if inst_box[3] <= orig_inst_map.shape[0] - 2:
+            if inst_box[3] <= orig_inst_map.shape[1] - 2:
                 inst_box[3] += 2
 
             # improvement
@@ -535,13 +534,3 @@ class PanNukeDataset(CellDataset):
             dist[1, y1:y2, x1:x2] = y_dist_map
 
         return dist
-
-
-if __name__ == '__main__':
-    dataset = PanNukeDataset(
-        dataset_path='/work/Pannuke/dataset',
-        folds=0,
-    )
-
-    dataset.load_cell_count()
-    dataset.get_sampling_weights_cell_tissue()

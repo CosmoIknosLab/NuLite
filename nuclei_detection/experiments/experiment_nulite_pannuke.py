@@ -7,10 +7,7 @@
 
 import copy
 import datetime
-import inspect
-import os
 import shutil
-import sys
 
 import yaml
 
@@ -18,11 +15,7 @@ from models.nulite import NuLite
 from nuclei_detection.datasets.base_cell import CellDataset
 from nuclei_detection.datasets.dataset_coordinator import select_dataset
 from nuclei_detection.training.nulite_trainer import NuLiteTrainer
-from utils.tools import close_logger
-
-currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
-parentdir = os.path.dirname(currentdir)
-sys.path.insert(0, parentdir)
+from utils.tools import available_cpu_count, close_logger
 
 from pathlib import Path
 from typing import Callable, Tuple, Union
@@ -136,21 +129,30 @@ class ExperimentNuLitePanNuke(BaseExperiment):
         )
 
         # define dataloaders
+        num_workers = int(
+            self.run_conf["training"].get("num_workers", min(16, available_cpu_count()))
+        )
+        # the in-memory dataset cache only pays off if the workers survive between epochs
+        persistent_workers = (
+            bool(self.run_conf["data"].get("cache_dataset", False)) and num_workers > 0
+        )
         train_dataloader = DataLoader(
             train_dataset,
             batch_size=self.run_conf["training"]["batch_size"],
             sampler=training_sampler,
-            num_workers=16,
+            num_workers=num_workers,
             pin_memory=False,
             worker_init_fn=self.seed_worker,
+            persistent_workers=persistent_workers,
         )
 
         val_dataloader = DataLoader(
             val_dataset,
-            batch_size=128,
-            num_workers=16,
+            batch_size=int(self.run_conf["training"].get("val_batch_size", 128)),
+            num_workers=num_workers,
             pin_memory=True,
             worker_init_fn=self.seed_worker,
+            persistent_workers=persistent_workers,
         )
 
         # start Training
@@ -169,6 +171,7 @@ class ExperimentNuLitePanNuke(BaseExperiment):
             experiment_config=self.run_conf,
             log_images=self.run_conf["logging"].get("log_images", False),
             magnification=self.run_conf["data"].get("magnification", 40),
+            mixed_precision=self.run_conf["training"].get("mixed_precision", True),
         )
 
         # Load checkpoint if provided
@@ -341,7 +344,8 @@ class ExperimentNuLitePanNuke(BaseExperiment):
         The configuration of the scheduler is given in the "training" -> "scheduler" section.
         Currenlty, "constant", "exponential" and "cosine" schedulers are implemented.
 
-        Required parameters for implemented schedulers:
+        Required parameters for implemented schedulers (either directly in the "scheduler" section
+        or nested under "scheduler" -> "hyperparameters"):
             - "constant": None
             - "exponential": gamma (optional, defaults to 0.95)
             - "cosine": eta_min (optional, defaults to 1-e5)
@@ -361,6 +365,9 @@ class ExperimentNuLitePanNuke(BaseExperiment):
             self.logger.warning(
                 f"Unknown Scheduler - No scheduler from the list {implemented_schedulers} select. Using default scheduling."
             )
+        scheduler_conf = self.run_conf["training"]["scheduler"]
+        # hyperparameters may be given flat or nested under "hyperparameters" (as in the example config)
+        scheduler_hp = {**scheduler_conf, **(scheduler_conf.get("hyperparameters") or {})}
         if scheduler_type.lower() == "constant":
             scheduler = SequentialLR(
                 optimizer=optimizer,
@@ -375,16 +382,17 @@ class ExperimentNuLitePanNuke(BaseExperiment):
         elif scheduler_type.lower() == "exponential":
             scheduler = ExponentialLR(
                 optimizer,
-                gamma=self.run_conf["training"]["scheduler"].get("gamma", 0.95),
+                gamma=float(scheduler_hp.get("gamma", 0.95)),
             )
         elif scheduler_type.lower() == "cosine":
             scheduler = CosineAnnealingLR(
                 optimizer,
                 T_max=self.run_conf["training"]["epochs"],
-                eta_min=self.run_conf["training"]["scheduler"].get("eta_min", 1e-5),
+                eta_min=float(scheduler_hp.get("eta_min", 1e-5)),
             )
         else:
             scheduler = super().get_scheduler(optimizer)
+        self.logger.info(f"Scheduler: {type(scheduler).__name__}")
         return scheduler
 
     def get_datasets(
@@ -415,14 +423,7 @@ class ExperimentNuLitePanNuke(BaseExperiment):
             raise RuntimeError(
                 "Provide either val_split or val_folds in configuration file, one is necessary."
             )
-        if (
-                "val_split" not in self.run_conf["data"]
-                and "val_folds" not in self.run_conf["data"]
-        ):
-            raise RuntimeError(
-                "Provide either val_split or val_fold in configuration file, one is necessary."
-            )
-        if "regression_loss" in self.run_conf["model"].keys():
+        if self.run_conf["model"].get("regression_loss", False):
             self.run_conf["data"]["regression_loss"] = True
 
         full_dataset = select_dataset(
@@ -485,6 +486,7 @@ class ExperimentNuLitePanNuke(BaseExperiment):
             num_tissue_classes=self.run_conf["data"]["num_tissue_classes"],
             vit_structure=backbone_type,
             drop_rate=self.run_conf["training"].get("drop_rate", 0),
+            pretrained_encoder=self.run_conf["model"].get("pretrained_encoder", True),
         )
         # model.freeze_encoder()
         self.logger.info(f"Loaded NuLite model with backbone: {backbone_type}")

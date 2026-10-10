@@ -1,87 +1,55 @@
+# -*- coding: utf-8 -*-
+# Train NuLite with a yaml configuration and evaluate the selected checkpoint on the test folds
 import inspect
 import os
 import sys
 
-from nuclei_detection.experiments.experiment_nulite_pannuke import ExperimentNuLitePanNuke
-from nuclei_detection.inference.inference_nufastvit_experiment_pannuke import InferenceNuLite
+# make the repository root importable when the script is started from another working directory
+_repo_root = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
+if _repo_root not in sys.path:
+    sys.path.insert(0, _repo_root)
 
-currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
-parentdir = os.path.dirname(currentdir)
-sys.path.insert(0, parentdir)
-from base_ml.base_cli import ExperimentBaseParser
+from base_ml.base_cli import ExperimentBaseParser  # noqa: E402
+from nuclei_detection.experiments.experiment_nulite_pannuke import ExperimentNuLitePanNuke  # noqa: E402
+from nuclei_detection.inference.inference_nufastvit_experiment_pannuke import InferenceNuLite  # noqa: E402
+
+EXPERIMENTS = {"pannuke": ExperimentNuLitePanNuke}
 
 
 if __name__ == "__main__":
     # Parse arguments
     configuration_parser = ExperimentBaseParser()
     configuration = configuration_parser.parse_arguments()
-    experiment_class = None
-    if configuration["data"]["dataset"].lower() == "pannuke":
-        experiment_class = ExperimentNuLitePanNuke
 
-    # Setup experiment
-    if "checkpoint" in configuration:
-        # continue checkpoint
-        experiment = experiment_class(
-            default_conf=configuration, checkpoint=configuration["checkpoint"]
+    dataset_name = str(configuration["data"]["dataset"]).lower()
+    if dataset_name not in EXPERIMENTS:
+        raise NotImplementedError(
+            f"Unknown dataset '{dataset_name}'. Implemented experiments: {list(EXPERIMENTS)}"
         )
-        outdir = experiment.run_experiment()
-        inference = InferenceNuLite(
-            run_dir=outdir,
-            gpu=configuration["gpu"],
-            checkpoint_name=configuration["eval_checkpoint"],
-            magnification=configuration["data"].get("magnification", 40),
-            reparameterize=configuration["model"].get("reparameterize", False)
-        )
-        (
-            trained_model,
-            inference_dataloader,
-            dataset_config,
-        ) = inference.setup_patch_inference()
-        inference.run_patch_inference(
-            trained_model, inference_dataloader, dataset_config, generate_plots=False
-        )
-    else:
-        experiment = experiment_class(default_conf=configuration)
-        if configuration["run_sweep"] is True:
-            # run new sweep
-            sweep_configuration = experiment_class.extract_sweep_arguments(
-                configuration
-            )
-            os.environ["WANDB_DIR"] = os.path.abspath(
-                configuration["logging"]["wandb_dir"]
-            )
-            '''sweep_id = wandb.sweep(
-                sweep=sweep_configuration, project=configuration["logging"]["project"]
-            )
-            wandb.agent(sweep_id=sweep_id, function=experiment.run_experiment)'''
-        elif "agent" in configuration and configuration["agent"] is not None:
-            # add agent to already existing sweep, not run sweep must be set to true
-            configuration["run_sweep"] = True
-            os.environ["WANDB_DIR"] = os.path.abspath(
-                configuration["logging"]["wandb_dir"]
-            )
-            '''wandb.agent(
-                sweep_id=configuration["agent"], function=experiment.run_experiment
-            )'''
-        else:
-            # casual run
-            outdir = experiment.run_experiment()
-            inference = InferenceNuLite(
-                run_dir=outdir,
-                gpu=configuration["gpu"],
-                checkpoint_name=configuration["eval_checkpoint"],
-                magnification=configuration["data"].get("magnification", 40),
-                reparameterize=configuration["model"].get("reparameterize", True)
-            )
-            (
-                trained_model,
-                inference_dataloader,
-                dataset_config,
-            ) = inference.setup_patch_inference()
-            inference.run_patch_inference(
-                trained_model,
-                inference_dataloader,
-                dataset_config,
-                generate_plots=False,
-            )
+    experiment_class = EXPERIMENTS[dataset_name]
+
+    # Setup and run experiment (optionally resuming from a checkpoint passed via --checkpoint)
+    experiment = experiment_class(
+        default_conf=configuration, checkpoint=configuration.get("checkpoint")
+    )
+    outdir = experiment.run_experiment()
+
+    # Evaluate on the test folds
+    inference = InferenceNuLite(
+        run_dir=outdir,
+        gpu=configuration["gpu"],
+        checkpoint_name=configuration.get("eval_checkpoint", "model_best.pth"),
+        magnification=configuration["data"].get("magnification", 40),
+        reparameterize=configuration["model"].get("reparameterize", True),
+    )
+    (
+        trained_model,
+        inference_dataloader,
+        dataset_config,
+    ) = inference.setup_patch_inference()
+    inference.run_patch_inference(
+        trained_model,
+        inference_dataloader,
+        dataset_config,
+        generate_plots=False,
+    )

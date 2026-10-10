@@ -6,21 +6,15 @@
 # University Medicine Essen
 
 import copy
-import inspect
 import logging
 import os
 import random
-import sys
 from abc import abstractmethod
 from pathlib import Path
 from typing import Tuple, Union
 
 from utils.logger import Logger
 from utils.tools import flatten_dict, remove_parameter_tag, unflatten_dict
-
-currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
-parentdir = os.path.dirname(currentdir)
-sys.path.insert(0, parentdir)
 
 import numpy as np
 import pandas as pd
@@ -59,12 +53,14 @@ class BaseExperiment:
         self.default_conf["logging"]["log_dir"] = str(
             Path(default_conf["logging"]["log_dir"]).resolve()
         )
-        self.default_conf["logging"]["wandb_dir"] = str(
-            Path(default_conf["logging"]["wandb_dir"]).resolve()
-        )
+        # legacy key (wandb logging has been removed): keep it resolved if present, but do not require it
+        if default_conf["logging"].get("wandb_dir") is not None:
+            self.default_conf["logging"]["wandb_dir"] = str(
+                Path(default_conf["logging"]["wandb_dir"]).resolve()
+            )
 
         if checkpoint is not None:
-            self.checkpoint = torch.load(checkpoint, map_location="cpu")
+            self.checkpoint = torch.load(checkpoint, map_location="cpu", weights_only=False)
         else:
             self.checkpoint = None
 
@@ -291,7 +287,7 @@ class BaseExperiment:
             yaml.dump(tmp_config, yaml_file, sort_keys=False)
 
         self.logger.debug(
-            f"Stored config under: {(Path(self.run_conf['logging']['log_dir']) / 'NuLite.yaml').resolve()}"
+            f"Stored config under: {(Path(self.run_conf['logging']['log_dir']) / 'config_0.yaml').resolve()}"
         )
 
     @staticmethod
@@ -367,18 +363,6 @@ class BaseExperiment:
         os.environ["PYTHONHASHSEED"] = str(seed)
         np.random.seed(seed)
         random.seed(seed)
-
-        '''try:
-            import tensorflow as tf
-        except ImportError:
-            pass
-        else:
-            if parse(tf.__version__) >= Version("2.0.0"):
-                tf.random.set_seed(seed)
-            elif parse(tf.__version__) <= Version("1.13.2"):
-                tf.set_random_seed(seed)
-            else:
-                tf.compat.v1.set_random_seed(seed)'''
 
     @staticmethod
     def seed_worker(worker_id) -> None:

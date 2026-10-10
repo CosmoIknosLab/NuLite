@@ -17,9 +17,8 @@ from base_ml.base_experiment import BaseExperiment
 from models.nulite import NuLite
 from nuclei_detection.utils.post_proc_nulite import calculate_instances
 from utils.logger import Logger
-from utils.tools import DataclassHVStorage
+from utils.tools import DataclassHVStorage, available_cpu_count
 
-BaseExperiment.seed_run(1232)
 import json
 from pathlib import Path
 from typing import List, Tuple, Union
@@ -60,23 +59,27 @@ class InferenceNuLite:
             checkpoint_name: str = "model_best.pth",
             reparameterize: bool = True
     ) -> None:
-        """Inference for HoverNet
+        """Patch-wise inference (PanNuke metrics) for a NuLite training run
 
         Args:
             run_dir (Union[Path, str]): logging directory with checkpoints and configs
             gpu (int): CUDA GPU device to use for inference
             magnification (int, optional): Dataset magnification. Defaults to 40.
             checkpoint_name (str, optional): Select name of the model to load. Defaults to model_best.pth
+            reparameterize (bool, optional): Reparameterize the FastViT encoder (inference mode) before evaluation.
+                Defaults to True.
         """
         self.run_dir = Path(run_dir)
-        self.save_dir = self.run_dir / f"{checkpoint_name.split('.')[0]}_{'reparameterize' if reparameterize == True else 'no_reparameterize'}"
-        self.device = f"cuda:{gpu}"
+        self.reparameterize = bool(reparameterize)
+        self.save_dir = self.run_dir / f"{Path(checkpoint_name).stem}_{'reparameterize' if self.reparameterize else 'no_reparameterize'}"
+        self.device = f"cuda:{gpu}" if torch.cuda.is_available() else "cpu"
         self.run_conf: dict = None
         self.logger: Logger = None
         self.magnification = magnification
         self.checkpoint_name = checkpoint_name
 
         self.__load_run_conf()
+        BaseExperiment.seed_run(int(self.run_conf.get("random_seed", 0)))
 
         self.__load_dataset_setup(dataset_path=self.run_conf["data"]["dataset_path"])
         self.__instantiate_logger()
@@ -84,7 +87,6 @@ class InferenceNuLite:
 
         self.logger.info(f"Loaded run: {run_dir}")
         self.num_classes = self.run_conf["data"]["num_nuclei_classes"]
-        self.reparameterize = reparameterize
 
     def __load_run_conf(self) -> None:
         """Load the training_example.yaml file with the run setup
@@ -146,6 +148,7 @@ class InferenceNuLite:
             num_nuclei_classes=self.run_conf["data"]["num_nuclei_classes"],
             num_tissue_classes=self.run_conf["data"]["num_tissue_classes"],
             vit_structure=self.run_conf["model"]["backbone"],
+            pretrained_encoder=False,  # weights come from the checkpoint
         )
         return model
 
@@ -172,33 +175,30 @@ class InferenceNuLite:
         """
         # get model for inference
         checkpoint = torch.load(
-            self.run_dir / "checkpoints" / self.checkpoint_name, map_location="cpu"
+            self.run_dir / "checkpoints" / self.checkpoint_name,
+            map_location="cpu",
+            weights_only=False,
         )
         model = self.get_model()
         self.logger.info(
-            f"Loading best model from {str(self.run_dir / 'checkpoints' / self.checkpoint_name)}"
+            f"Loading model from {str(self.run_dir / 'checkpoints' / self.checkpoint_name)}"
         )
         self.logger.info(model.load_state_dict(checkpoint["model_state_dict"]))
-        if checkpoint["arch"] == "CellFastViT" and self.reparameterize is True:
-            model.eval()
+        model.eval()
+        if self.reparameterize:
             model.reparameterize_encoder()
             self.logger.info("Model reparameterized")
         # get dataset
-        if test_folds is None:
-            if "test_folds" in self.run_conf["data"]:
-                if self.run_conf["data"]["test_folds"] is None:
-                    self.logger.info(
-                        "There was no test set provided. We now use the validation dataset for testing"
-                    )
-                    self.run_conf["data"]["test_folds"] = self.run_conf["data"][
-                        "val_folds"
-                    ]
-            else:
-                self.logger.info(
-                    "There was no test set provided. We now use the validation dataset for testing"
+        if test_folds is not None:
+            self.run_conf["data"]["test_folds"] = list(test_folds)
+        elif self.run_conf["data"].get("test_folds") is None:
+            if self.run_conf["data"].get("val_folds") is None:
+                raise RuntimeError(
+                    "Neither test_folds nor val_folds are defined in the run configuration."
                 )
-                self.run_conf["data"]["test_folds"] = self.run_conf["data"]["val_folds"]
-        else:
+            self.logger.info(
+                "There was no test set provided. We now use the validation dataset for testing"
+            )
             self.run_conf["data"]["test_folds"] = self.run_conf["data"]["val_folds"]
         self.logger.info(
             f"Performing Inference on test set: {self.run_conf['data']['test_folds']}"
@@ -222,8 +222,8 @@ class InferenceNuLite:
 
         inference_dataloader = DataLoader(
             inference_dataset,
-            batch_size=128,
-            num_workers=32,
+            batch_size=int(self.run_conf["training"].get("val_batch_size", 128)),
+            num_workers=min(16, available_cpu_count()),
             pin_memory=False,
             shuffle=False,
         )
@@ -541,9 +541,9 @@ class InferenceNuLite:
         tissue_types = list(batch[2])
         image_names = list(batch[3])
 
-        model.zero_grad()
-
-        with torch.autocast(device_type="cuda", dtype=torch.float16):
+        with torch.autocast(
+            device_type="cuda", dtype=torch.float16, enabled=self.device.startswith("cuda")
+        ):
             predictions = model.forward(imgs)
 
         predictions = self.unpack_predictions(predictions=predictions, model=model)
@@ -622,7 +622,8 @@ class InferenceNuLite:
         ).type(
             torch.float32
         )  # background, nuclei
-        nuclei_type_maps = torch.squeeze(masks["nuclei_type_map"]).type(torch.int64)
+        # (B, H, W) -> do not squeeze: a batch of size 1 would lose its batch dimension
+        nuclei_type_maps = masks["nuclei_type_map"].type(torch.int64)
         gt_nuclei_type_maps_onehot = F.one_hot(
             nuclei_type_maps, num_classes=self.num_classes
         ).type(
@@ -853,7 +854,10 @@ class InferenceNuLite:
             cell_type_dq_scores.append(nuclei_type_dq)
             cell_type_sq_scores.append(nuclei_type_sq)
 
-        paired_all = np.concatenate(paired_all, axis=0)
+        if len(paired_all) > 0:
+            paired_all = np.concatenate(paired_all, axis=0)
+        else:  # no matched pair in the whole batch
+            paired_all = np.zeros((0, 2), dtype=np.int64)
         unpaired_true_all = np.concatenate(unpaired_true_all, axis=0)
         unpaired_pred_all = np.concatenate(unpaired_pred_all, axis=0)
         true_inst_type_all = np.concatenate(true_inst_type_all, axis=0)
@@ -959,9 +963,10 @@ class InferenceNuLite:
         else:
             mean = (0.5, 0.5, 0.5)
             std = (0.5, 0.5, 0.5)
+        # x_norm = (x - mean) / std  ->  x = x_norm * std + mean = (x_norm - (-mean/std)) / (1/std)
         inv_normalize = transforms.Normalize(
-            mean=[-0.5 / mean[0], -0.5 / mean[1], -0.5 / mean[2]],
-            std=[1 / std[0], 1 / std[1], 1 / std[2]],
+            mean=[-m / s for m, s in zip(mean, std)],
+            std=[1 / s for s in std],
         )
         inv_samples = inv_normalize(torch.tensor(sample_images).permute(0, 3, 1, 2))
         sample_images = inv_samples.permute(0, 2, 3, 1).detach().cpu().numpy()
@@ -1139,7 +1144,7 @@ class InferenceNuLiteParser:
             default="model_best.pth",
         )
         parser.add_argument(
-            "--gpu", type=int, help="Cuda-GPU ID for inference", default=5
+            "--gpu", type=int, help="Cuda-GPU ID for inference", default=0
         )
         parser.add_argument(
             "--magnification",
