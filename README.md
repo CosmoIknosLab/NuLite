@@ -61,10 +61,11 @@ Below are the main directories in the repository:
 
 Below are the main executable scripts in the repository:
 
-- `process_pannuke_dataset.py`: script to transform PanNuke dataset for knowledge distillation
-- `train_nulite.py`: main training script for NuLite
+- `nuclei_detection/datasets/prepare_pannuke.py`: converts the PanNuke numpy folds into the dataset structure used for training (images, labels, `types.csv`, `cell_count.csv`, `dataset_config.yaml`, `weight_config.yaml`)
+- `train_nulite.py`: main training script for NuLite (evaluates the selected checkpoint on the test folds at the end)
 - `run_inference_wsi.py`: main inference script for WSI
 - `preprocessing/patch_extraction/main_extraction.py`: main script for patches extraction for WSI
+- `sanitize_weights.py`: strips a training checkpoint down to the entries needed for WSI inference (only required for old checkpoints saved without the `config` entry)
 
 
 ## Datasets
@@ -78,13 +79,15 @@ Below are the main executable scripts in the repository:
 To run this code set up python environment as follows:
 
 ```bash
-git clone https://github.com/DIAGNijmegen/NuLite.git
+git clone https://github.com/CosmoIknosLab/NuLite.git
 cd NuLite
 python -m venv NuLite
 source NuLite/bin/activate
 pip install -r requirements.txt
 ```
 We tested our code with `Python 3.8.10/3.10.8` and `Cuda 12`.
+All scripts must be started from the repository root (the packages are imported as `nuclei_detection.*`, `preprocessing.*`, ...).
+The WSI preprocessing uses [OpenSlide](https://openslide.org/) (the `openslide` system library must be installed); [cuCIM](https://github.com/rapidsai/cucim) is optional (Linux only) and is used automatically when available.
 
 ## Training
 > **Note**
@@ -112,9 +115,19 @@ This script initiates an experiment using the specified configuration file.
 #### Required Named Argument
 
 - `--config CONFIG`: Specify the path to the configuration file (default is None).
-An example configuration file is available at `configs_examples/traning_example.yaml`. 
-We used the same dataset structure of CellViT for the PanNuke, for more detail see [here](https://github.com/TIO-IKIM/CellViT/blob/main/docs/readmes/pannuke.md).
-The preparation script is in the [`nuclei_detection/datasets/`](nuclei_detection/datasets) folder.
+An example configuration file is available at [`config_examples/training_example.yaml`](config_examples/training_example.yaml).
+
+### Dataset preparation
+We use the same dataset structure as CellViT for PanNuke, for more details see [here](https://github.com/TIO-IKIM/CellViT/blob/main/docs/readmes/pannuke.md).
+Download the three PanNuke folds and run
+
+```bash
+python nuclei_detection/datasets/prepare_pannuke.py --input_path /path/to/PanNuke --output_path /path/to/prepared_pannuke
+```
+
+For each fold the script writes the `images/` and `labels/` folders together with `types.csv` (tissue type per image) and `cell_count.csv` (nuclei per type and image, used for the weighted sampling), and creates `dataset_config.yaml` and `weight_config.yaml` in the dataset root. Reference copies of these files are in [`configs/datasets/PanNuke`](configs/datasets/PanNuke). Set `data.dataset_path` in the training configuration to the output folder.
+
+The checkpoints written during training (`checkpoints/model_best.pth` and `checkpoints/latest_checkpoint.pth`) contain the run configuration and can be used directly with `run_inference_wsi.py`.
 
 ## Inference
 
@@ -133,44 +146,46 @@ License: [Apache 2.0 with Commons Clause](./LICENSE)
 The provided checkpoints were trained on whole PanNuke dataset.
 
 ### Steps
-To perform preprocessing, follow these steps:
-1. Prepare WSI using our preprocessing pipeline.
-2. Run inference with the [`inference/cell_detection.py`](/cell_segmentation/inference/cell_detection.py) script.
+To perform inference on a WSI, follow these steps:
+1. Prepare the WSI using our preprocessing pipeline ([`preprocessing/patch_extraction/main_extraction.py`](preprocessing/patch_extraction/main_extraction.py), patch size 1024 with 6.25% overlap = 64 px).
+2. Run inference with the [`run_inference_wsi.py`](run_inference_wsi.py) script.
 
 #### Cell detection script
-To perform inference, use the [`cell_detection.py`](inference/cell_detection.py) script in the `cell_segmentation/inference` folder:
+To perform inference, use the [`run_inference_wsi.py`](run_inference_wsi.py) script in the repository root:
 
 ```bash
-usage: run_wsi_inference.py --model MODEL [--gpu GPU] [--magnification MAGNIFICATION] [--mixed_precision]
-                          [--batch_size BATCH_SIZE] [--outdir_subdir OUTDIR_SUBDIR]
-                          [--geojson] {process_wsi,process_dataset} ...
+usage: run_inference_wsi.py --model MODEL [--gpu GPU] [--magnification MAGNIFICATION]
+                            [--batch_size BATCH_SIZE] [--outdir_subdir OUTDIR_SUBDIR]
+                            [--geojson] {process_wsi,process_dataset} ...
 
-Perform NuLite inference for given run-directory with model checkpoints and logs.
+Perform NuLite inference on a preprocessed (patched) WSI or on a whole dataset of patched WSIs.
 
 optional arguments:
   -h, --help            show this help message and exit
-  --gpu GPU             CUDA-GPU ID for inference. Default: 0 (default: 0)
+  --gpu GPU             Cuda-GPU ID for inference (default: 0)
   --magnification MAGNIFICATION
-                        Network magnification. Ensures correct resolution for the network. Default: 40 (default: 40)
-  --mixed_precision     Use mixed precision for inference. Default: False (default: False)
+                        Network magnification. Is used for checking patch magnification such that we use the correct resolution for network. (default: 40)
   --batch_size BATCH_SIZE
-                        Inference batch size. Default: 8 (default: 8)
+                        Inference batch-size (default: 8)
   --outdir_subdir OUTDIR_SUBDIR
-                        Creates a subdirectory in the cell_detection folder for storing results. Default: None (default: None)
-  --geojson             Exports results as geojson files for use in software like QuPath. Default: False (default: False)
+                        If provided, a subdir with the given name is created in the cell_detection folder where the results are stored. (default: None)
+  --geojson             Set this flag to export results as additional geojson files for loading them into Software like QuPath.
 
 required named arguments:
-  --model MODEL         Model checkpoint file for inference (default: None)
+  --model MODEL         Model checkpoint file that is used for inference (default: None)
 
 subcommands:
-  Main command for performing inference on a single WSI file or an entire dataset.
+  Main run command for either performing inference on single WSI-file or on whole dataset
 
   {process_wsi,process_dataset}
 ```
+Inference always runs with float16 autocast on CUDA; if no GPU is available it falls back to the CPU (slow).
+Patch size and overlap are read from the `metadata.yaml` written by the preprocessing.
+
 #### Single WSI
 To process a single WSI file, use the `process_wsi` subcommand:
 ```bash
-usage: cell_detection.py process_wsi --wsi_path WSI_PATH --patched_slide_path PATCHED_SLIDE_PATH
+usage: run_inference_wsi.py process_wsi --wsi_path WSI_PATH --patched_slide_path PATCHED_SLIDE_PATH
 
 Process a single WSI file.
 
@@ -183,7 +198,7 @@ arguments:
 #### Multiple WSI
 To process an entire dataset, use the `process_dataset` subcommand:
 ```bash
-usage: cell_detection.py process_dataset  --wsi_paths WSI_PATHS --patch_dataset_path PATCH_DATASET_PATH [--filelist FILELIST] [--wsi_extension WSI_EXTENSION]
+usage: run_inference_wsi.py process_dataset --wsi_paths WSI_PATHS --patch_dataset_path PATCH_DATASET_PATH [--filelist FILELIST] [--wsi_extension WSI_EXTENSION]
 
 Process a whole dataset.
 
@@ -200,27 +215,27 @@ arguments:
 
 ### Inference Example
 We provide an example TCGA file to show the performance and usage of our algorithms.
-Files and scripts can be found in the [example](example) folder.
+The preprocessed patches and the inference results can be found in the [wsi_example](wsi_example) folder.
 The TCGA slide must be downloaded here: https://portal.gdc.cancer.gov/files/f9147f06-2902-4a64-b293-5dbf9217c668.
-Please place this file in the example folder.
+Please place this file in the `wsi_example` folder.
 
 ```bash
-python3 ./preprocessing/patch_extraction/main_extraction.py --config ./example/preprocessing_example.yaml
+python3 ./preprocessing/patch_extraction/main_extraction.py --config ./config_examples/preprocessing_example.yaml
 ```
 
-Output is stored inside `./example/output/preprocessing`
+Output is stored inside `./wsi_example/output/preprocessing`
 
 **Inference:**
 Download the models and store them in `./models/pretrained` or on your preferred location and change the model parameter.
 
 ```bash
-python3 ./cell_segmentation/inference/cell_detection.py \
-  --model ./models/pretrained/NuLite/NuLite-H-Weights.pth\
+python3 ./run_inference_wsi.py \
+  --model ./models/pretrained/NuLite/NuLite-H-Weights.pth \
   --gpu 0 \
   --geojson \
   process_wsi \
-  --wsi_path ./example/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE.svs \
-  --patched_slide_path ./example/output/preprocessing/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE
+  --wsi_path ./wsi_example/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE.svs \
+  --patched_slide_path ./wsi_example/output/preprocessing/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE
 ```
 You can import your results (.geojson files) into [QuPath](https://qupath.github.io/). The results should look like this:
 <div align="center">
