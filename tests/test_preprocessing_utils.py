@@ -16,12 +16,29 @@ from preprocessing.patch_extraction.src.utils.masking import (
     rasterize_polygons,
 )
 from preprocessing.patch_extraction.src.utils.patch_util import (
+    background_ratio_from_mask,
     compute_overlap,
     compute_patch_location_in_level,
     get_files_from_dir,
     is_power_of_two,
     patch_to_tile_size,
 )
+
+
+def test_background_ratio_is_robust_to_unsigned_overflow():
+    # thumbnail tile with overlap (256x256) is larger than the reference patch area (240x240):
+    # with numpy >= 2 the former uint64 arithmetic wrapped around and rejected every tissue patch
+    tissue = np.zeros((256, 256), dtype=np.uint8)  # 0 = tissue
+    assert background_ratio_from_mask(tissue, 240) == 0.0
+    background = np.ones((256, 256), dtype=np.uint8)
+    assert background_ratio_from_mask(background, 240) == 1.0
+    half = np.zeros((240, 240), dtype=np.uint8)
+    half[:120] = 1
+    assert abs(background_ratio_from_mask(half, 240) - 0.5) < 1e-9
+    # tile smaller than the patch (slide border): the missing pixels count as background
+    cropped = np.zeros((200, 240), dtype=np.uint8)
+    assert abs(background_ratio_from_mask(cropped, 240) - (40 * 240) / 240**2) < 1e-9
+    assert background_ratio_from_mask(np.zeros((240, 240), dtype=bool), 240) == 0.0
 
 
 def test_config_validators_reject_out_of_range_values(tmp_path):

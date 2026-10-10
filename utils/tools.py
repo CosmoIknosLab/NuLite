@@ -19,7 +19,9 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import torch
 
-from utils import logger
+# NOTE: do not use `from utils import logger`: importing the submodule utils.logger (done by most
+# entry points) rebinds the package attribute "logger" to that module and `.info()` would fail.
+logger = logging.getLogger("__main__")
 
 
 # Helper timing functions

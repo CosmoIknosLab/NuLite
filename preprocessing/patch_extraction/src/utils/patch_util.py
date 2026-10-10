@@ -83,6 +83,26 @@ def is_power_of_two(n: int) -> bool:
     return (n != 0) and (n & (n - 1) == 0)
 
 
+def background_ratio_from_mask(background_mask: np.ndarray, patch_size: int) -> float:
+    """Background ratio of a patch from its binary background mask (1 = background).
+
+    Pixels missing from the mask (tile smaller than patch_size x patch_size, i.e. padding at the
+    slide border) count as background. The arithmetic is done with Python ints on purpose:
+    ``np.sum`` of a uint8 mask is uint64 and, with numpy >= 2, ``uint64 + a - b`` wraps around
+    instead of becoming negative when the tile (with overlap) is larger than patch_size².
+
+    Args:
+        background_mask (np.ndarray): Binary mask with shape (height, width), 1/True = background
+        patch_size (int): Patch size (without overlap) used as reference area
+
+    Returns:
+        float: Background ratio in [0, 1]
+    """
+    tile_area = int(background_mask.shape[0]) * int(background_mask.shape[1])
+    total_background_pixels = int(np.sum(background_mask)) + patch_size**2 - tile_area
+    return float(min(1.0, max(0.0, total_background_pixels / (patch_size**2))))
+
+
 def patch_to_tile_size(
     patch_size: int, overlap: int, rescaling_factor: float = 1.0
 ) -> Tuple[int, int]:
@@ -492,12 +512,7 @@ def compute_interesting_patches(
 
             # The total background is the number of current white pixels plus the pixels that will
             # be added by padding
-            total_background_pixels = (
-                np.sum(curr_tile)
-                + (downsample_patch_size**2)
-                - (curr_tile.shape[0] * curr_tile.shape[1])
-            )
-            background_ratio = total_background_pixels / (downsample_patch_size**2)
+            background_ratio = background_ratio_from_mask(curr_tile, downsample_patch_size)
             if background_ratio <= 1 - tissue_annotation_intersection_ratio:
                 interesting_patches.append((row, col, background_ratio))
                 draw.rectangle(
@@ -954,12 +969,8 @@ def calculate_background_ratio(patch: np.ndarray, patch_size: int) -> float:
     black_mask = cv2.inRange(hsv_img, (0, 0, 0), (180, 255, 85))
     background_mask = gray_mask | black_mask
     background_mask = (background_mask / 255).astype(np.uint8)
-    total_background_pixels = (
-        np.sum(background_mask) + (patch_size**2) - (patch.shape[0] * patch.shape[1])
-    )
-    background_ratio = total_background_pixels / (patch_size**2)
 
-    return background_ratio
+    return background_ratio_from_mask(background_mask, patch_size)
 
 
 def get_intersected_labels(
