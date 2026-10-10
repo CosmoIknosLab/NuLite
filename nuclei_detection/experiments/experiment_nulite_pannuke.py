@@ -72,8 +72,11 @@ class ExperimentNuLitePanNuke(BaseExperiment):
             f"Cuda devices: {[torch.cuda.device(i) for i in range(torch.cuda.device_count())]}"
         )
         ### Machine Learning
-        device = f"cuda:{self.run_conf['gpu']}"
-        self.logger.info(f"Using GPU: {device}")
+        if torch.cuda.is_available():
+            device = f"cuda:{self.run_conf['gpu']}"
+        else:
+            device = "cpu"
+            self.logger.warning("No CUDA device available - training on CPU (slow, mixed precision disabled)")
         self.logger.info(f"Using device: {device}")
 
         # loss functions
