@@ -1,8 +1,8 @@
-# dataset paths
-wsi_paths: /work/temp.svs
-output_path: /tmp/nulite_inference/
+# dataset paths (a single WSI file or a folder with WSI files)
+wsi_paths: ./wsi_example/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE.svs
+output_path: ./wsi_example/output/preprocessing
 
-# basic setups
+# basic setups: NuLite WSI inference expects 1024 px patches with 64 px overlap (6.25 %)
 patch_size: 1024
 patch_overlap: 6.25
 target_mag: 40

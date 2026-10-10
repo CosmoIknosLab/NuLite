@@ -64,7 +64,7 @@ def get_files_from_dir(
             if len(all_files) == 0:
                 all_files += [
                     curr_file
-                    for curr_file in curr_path.glob("**/*" + file_type)
+                    for curr_file in curr_path.glob("**/*." + file_type)
                     if curr_file.is_file()
                 ]
 
@@ -434,9 +434,16 @@ def compute_interesting_patches(
     if downsample_tile_size < 1:
         logger.warning(
             "The tile size is too small to correctly compute the background mask. "
-            "Please choose a larger full_tile_size or a larger tile size."
+            "Please choose a larger full_tile_size or a larger tile size. All patches are kept."
         )
-        return [(row, col, 1.0) for row in range(n_rows) for col in range(n_cols)]
+        tissue_mask_image = Image.fromarray(tissue_mask * 255).convert("RGB")
+        mask_images = {
+            "mask_nogrid": tissue_mask_image,
+            "mask": tissue_mask_image.copy(),
+            "tissue_grid": Image.fromarray(full_tile.copy()).convert("RGB"),
+        }
+        all_coords = [(row, col, 1.0) for row in range(n_rows) for col in range(n_cols)]
+        return all_coords, mask_images, {}
 
     if downsample_overlap % 2 != 0 or downsample_patch_size % 2 != 0:
         logger.warning(
@@ -509,7 +516,7 @@ def compute_interesting_patches(
         "mask": tissue_mask_image_grid,
         "tissue_grid": tissue_grid,
     }
-    if len(polygons) != 0:
+    if polygons is not None and len(polygons) != 0:
         mask_images_annotations = generate_polygon_overview(
             polygons=polygons,
             region_labels=region_labels,
@@ -1112,8 +1119,8 @@ def polygon_to_patch_mask(
             label_mask = np.zeros((mask_size, mask_size, num_labels), dtype=np.uint8)
             for poly, label in poly_label_pair:
                 label_submask = np.zeros((patch_size, patch_size), dtype=np.uint8)
-                rasterize((poly, 1), out=label_mask, all_touched=True)
-                label_mask[:, :, label] = label_submask
+                rasterize([(poly, 1)], out=label_submask, all_touched=True)
+                label_mask[:, :, label] = np.maximum(label_mask[:, :, label], label_submask)
 
     return label_mask
 

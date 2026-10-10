@@ -5,23 +5,53 @@
 # Institute for Artifical Intelligence in Medicine,
 # University Medicine Essen
 
-import os
-import warnings
 from typing import List, Tuple, Union
 
 import cv2
 import numpy as np
-import rasterio
 import skimage.color as sk_color
 import skimage.filters as sk_filters
 import skimage.morphology as sk_morphology
-from histolab.filters.image_filters import BluePenFilter, GreenPenFilter, RedPenFilter
 from PIL import Image
-from rasterio.mask import mask as rasterio_mask
+from rasterio.features import rasterize
 from shapely.affinity import scale
 from shapely.geometry import Polygon
+from shapely.geometry.base import BaseGeometry
 
 from preprocessing.patch_extraction import logger
+
+
+def as_geometry_list(polygons: Union[BaseGeometry, List[BaseGeometry]]) -> List[BaseGeometry]:
+    """Accept a single geometry or an iterable of geometries and always return a list."""
+    if isinstance(polygons, BaseGeometry):
+        return [polygons]
+    return list(polygons)
+
+
+def rasterize_polygons(
+    polygons: Union[BaseGeometry, List[BaseGeometry]],
+    shape: Tuple[int, int],
+    value: int = 1,
+) -> np.ndarray:
+    """Rasterize polygons given in pixel coordinates into a uint8 mask.
+
+    Pixels whose center lies inside a polygon (holes excluded) get `value`, all others 0.
+    This replaces the previous approach (temporary GeoTIFF on disk + rasterio.mask), which
+    was not safe for parallel runs; the semantics are identical.
+
+    Args:
+        polygons (Union[BaseGeometry, List[BaseGeometry]]): Polygon(s) in pixel coordinates of the mask.
+        shape (Tuple[int, int]): Output shape (height, width).
+        value (int, optional): Value assigned inside the polygons. Defaults to 1.
+
+    Returns:
+        np.ndarray: Mask with shape (height, width) and dtype uint8
+    """
+    polygons = [p for p in as_geometry_list(polygons) if not p.is_empty]
+    out = np.zeros(tuple(shape), dtype=np.uint8)
+    if len(polygons) == 0:
+        return out
+    return rasterize(((p, value) for p in polygons), out=out, fill=0)
 
 
 def generate_tissue_mask(
@@ -44,13 +74,13 @@ def generate_tissue_mask(
         polygons (List[Polygon], optional):  Annotations of this WSI as a list of polygons (referenced to highest level of WSI). Defaults to None.
         region_labels (List[str], optional): List of labels for the annotations provided as polygons parameter. Defaults to None.
         otsu_annotation (Union[List[str], str], optional):  List with annotation names or string with annotation name to use for a masked otsu thresholding.
-            Defaults to "object".
+            Multiple names in one string can be separated by whitespace. Defaults to "object".
         downsample (int, optional): Downsampling of the tissue tile compared to highest WSI level. Used for matching annotations with tissue-tile size.
             Defaults to 1.
         apply_prefilter (bool, optional): If a prefilter should be used to remove markers before applying otsu. Defaults to False.
 
     Returns:
-        np.ndarray: Binary tissue mask with shape (height, width)
+        np.ndarray: Binary tissue mask with shape (height, width). 1 = background, 0 = tissue
     """
     if polygons is not None:
         assert len(polygons) == len(
@@ -60,8 +90,8 @@ def generate_tissue_mask(
     if mask_otsu:
         # filter
         otsu_polgyon = get_filtered_polygons(
-            polygons=polygons,
-            region_labels=region_labels,
+            polygons=polygons or [],
+            region_labels=region_labels or [],
             filter_labels=otsu_annotation,
             downsample=downsample,
         )
@@ -71,7 +101,6 @@ def generate_tissue_mask(
             )
             tissue_tile = mask_tile_with_region(tile=tissue_tile, polygons=otsu_polgyon)
         else:
-            logger.error("ValueError:")
             logger.error(
                 "Annotation with given label does not exist. Using unmasked thresholding"
             )
@@ -87,7 +116,7 @@ def generate_tissue_mask(
 
 
 def convert_polygons_to_mask(
-    polygons: Tuple[List[Polygon], Polygon],
+    polygons: Union[List[Polygon], Polygon],
     reference_size: Tuple[int],
     downsample: int = 1,
 ) -> np.ndarray:
@@ -96,16 +125,13 @@ def convert_polygons_to_mask(
     The function is assuming that polygons have already been filtered (see get_filtered_polygon).
 
     Args:
-        polygons (Tuple[List[Polygon], Polygon]): List of polygons converted to a mask. Can work with Polygons with holes inside
+        polygons (Union[List[Polygon], Polygon]): List of polygons converted to a mask. Can work with Polygons with holes inside
         reference_size (tuple[int]): Shape of resulting mask image. Shape should be (height, width, channels).
         downsample (int, optional): Set the factor by which the polygon should be scaled down. Defaults to 1.
 
     Returns:
-        np.ndarray: Binary mask with shape (height, width)
+        np.ndarray: Binary mask with shape (height, width). 1 = background, 0 = inside the polygons (tissue)
     """
-
-    if type(polygons) is not List:
-        polygons = list(polygons)
     polygons_downsampled = [
         scale(
             poly,
@@ -113,29 +139,20 @@ def convert_polygons_to_mask(
             yfact=1 / downsample,
             origin=(0, 0),
         )
-        for poly in polygons
+        for poly in as_geometry_list(polygons)
     ]
-    src = 255 * np.ones(shape=reference_size, dtype=np.uint8)
-    im = Image.fromarray(src)
-    im.save("tmp.tif")
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore")
-        with rasterio.open("tmp.tif") as src:
-            out_image, _ = rasterio_mask(src, polygons_downsampled, crop=False)
-            mask = out_image.transpose(1, 2, 0)
-            mask = np.invert(mask)
-    os.remove("tmp.tif")
-    mask = (mask / 255).astype(np.uint8)
+    inside = rasterize_polygons(polygons_downsampled, shape=tuple(reference_size[:2]), value=1)
+    mask = (1 - inside).astype(np.uint8)
 
     assert len(np.unique(mask)) <= 2, "Mask is not binary"
 
-    return mask[:, :, 0]
+    return mask
 
 
 def get_filtered_polygons(
     polygons: List[Polygon],
     region_labels: List[str],
-    filter_labels: List[str],
+    filter_labels: Union[List[str], str],
     downsample: int = 1,
 ) -> List[Polygon]:
     """Filter Polygons by a list of filter labels
@@ -146,12 +163,16 @@ def get_filtered_polygons(
     Args:
         polygons (List[Polygon]): Annotations as a list of polygons.
         region_labels (List[str]): List of labels
-        filter_labels (List[str]): List of labels to filter
+        filter_labels (Union[List[str], str]): Labels to keep. A single string may contain several
+            labels separated by whitespace.
         downsample (int, optional): Scaling factor to downscale polygon. Defaults to 1.
 
     Returns:
         List[Polygon]: List with filtered polygons
     """
+    if isinstance(filter_labels, str):
+        filter_labels = filter_labels.split()
+    filter_labels = set(filter_labels)
     logger.debug(
         f"Filter polygons for label: {filter_labels} and downsample results to {downsample}"
     )
@@ -172,7 +193,7 @@ def get_filtered_polygons(
 def mask_tile_with_region(
     tile: np.ndarray, polygons: Union[List[Polygon], Polygon]
 ) -> np.ndarray:
-    """Mask a tile with a region and return the masked tile
+    """Mask a tile with a region and return the masked tile (everything outside the region becomes white)
 
     Args:
         tile (np.ndarray): Tile which should be masked
@@ -181,21 +202,7 @@ def mask_tile_with_region(
     Returns:
         np.ndarray: Masked tile
     """
-    if type(polygons) is not List:
-        polygons = list(polygons)
-
-    # create temp file for rasterio
-    src = 255 * np.ones(shape=(tile.shape[0:2]), dtype=np.uint8)
-    im = Image.fromarray(src)
-    im.save("tmp.tif")
-    # get mask out of polygon
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore")
-        with rasterio.open("tmp.tif") as src:
-            out_image, out_transform = rasterio_mask(src, polygons, crop=False)
-            mask = out_image.transpose(1, 2, 0)
-    # remove temp file
-    os.remove("tmp.tif")
+    mask = rasterize_polygons(polygons, shape=tile.shape[:2], value=255)
     # create masked figure
     fg = cv2.bitwise_or(tile, tile, mask=mask)
     inverse_mask = cv2.bitwise_not(mask)
@@ -212,7 +219,7 @@ def apply_otsu_thresholding(tile: np.ndarray) -> np.ndarray:
         tile (np.ndarray): Tile with tissue with shape (height, width, 3)
 
     Returns:
-        np.ndarray: Binary mask with shape (height, width)
+        np.ndarray: Binary mask with shape (height, width). 1 = background, 0 = tissue
     """
     hsv_img = cv2.cvtColor(tile.astype(np.uint8), cv2.COLOR_RGB2HSV)
     gray_mask = cv2.inRange(hsv_img, (0, 0, 70), (180, 10, 255))
@@ -268,14 +275,17 @@ def mask_rgb(rgb: np.ndarray, mask: np.ndarray) -> np.ndarray:
 
 
 def remove_marker_filters(tile: np.ndarray) -> np.ndarray:
-    """Generate a binary tissue mask by using Otsu thresholding
+    """Remove pen markers (red, green, blue) from a tile; removed pixels become white
 
     Args:
         tile (np.ndarray): Tile with tissue with shape (height, width, 3)
 
     Returns:
-        np.ndarray: Binary mask with shape (height, width)
+        np.ndarray: Filtered tile with shape (height, width, 3)
     """
+    # histolab is only needed for the optional marker pre-filter: import lazily
+    from histolab.filters.image_filters import BluePenFilter, GreenPenFilter, RedPenFilter
+
     red_pen_filter = RedPenFilter()
     green_pen_filter = GreenPenFilter()
     blue_pen_filter = BluePenFilter()

@@ -5,11 +5,13 @@
 # Institute for Artifical Intelligence in Medicine,
 # University Medicine Essen
 
+import copy
 import csv
 import json
 import multiprocessing
 import os
 import random
+import time
 import warnings
 from pathlib import Path
 from shutil import rmtree
@@ -98,7 +100,8 @@ def queue_worker(
         item.pop()
         item = tuple(item)
         store.save_elem_to_disk(item)
-        processed_count.value += 1
+        with processed_count.get_lock():
+            processed_count.value += 1
 
 
 class PreProcessor(object):
@@ -275,15 +278,18 @@ class PreProcessor(object):
         self.detector_device = torch.device(
             "cuda:0" if torch.cuda.is_available() else "cpu"
         )
-        if self.detector_device == "cpu":
+        if self.detector_device.type == "cpu":
             logger.warning(
                 "No CUDA device detected - Speed may be very slow. Please consider performing extraction on CUDA device or disable tissue detector!"
             )
         model = mobilenet_v3_small().to(device=self.detector_device)
         model.classifier[-1] = nn.Linear(1024, 4)
+        # resolve relative to this file, so that extraction can be started from any working directory
+        tissue_detector_path = Path(__file__).resolve().parent / "data" / "tissue_detector.pt"
         checkpoint = torch.load(
-            "./preprocessing/patch_extraction/src/data/tissue_detector.pt",
+            tissue_detector_path,
             map_location=self.detector_device,
+            weights_only=False,
         )
         model.load_state_dict(checkpoint["model_state_dict"])
         model.eval()
@@ -317,6 +323,7 @@ class PreProcessor(object):
             patch_size=self.config.patch_size,
             patch_overlap=self.config.patch_overlap,
             downsample=self.config.downsample,
+            target_mag=self.config.target_mag,
             level=self.config.level,
             min_background_ratio=self.config.min_intersection_ratio,
         )
@@ -611,7 +618,7 @@ class PreProcessor(object):
             slide_mag = self.config.wsi_properties["magnification"]
         else:
             raise NotImplementedError(
-                "MPP must be defined either by metadata or by config file!"
+                "Magnification must be defined either by metadata or by config file!"
             )
 
         slide_properties = {"mpp": slide_mpp, "magnification": slide_mag}
@@ -697,32 +704,28 @@ class PreProcessor(object):
         # get the interesting coordinates: no background, filtered by annotation etc.
         # original number of tiles of total wsi
         n_cols, n_rows = tiles.level_tiles[level]
-        if self.config.min_intersection_ratio == 0.0 and tissue_region is None:
-            # Create a list of all coordinates of the grid -> Whole WSI with background is loaded
-            interesting_coords = [
-                (row, col, 1.0) for row in range(n_rows) for col in range(n_cols)
-            ]
-        else:
-            (
-                interesting_coords,
-                mask_images,
-                mask_images_annotations,
-            ) = compute_interesting_patches(
-                polygons=polygons,
-                slide=slide,
-                tiles=tiles,
-                target_level=level if level is not None else 1,
-                target_patch_size=tile_size,  # self.config.patch_size,
-                target_overlap=overlap,  # self.config.patch_overlap,
-                rescaling_factor=self.rescaling_factor,
-                mask_otsu=self.config.masked_otsu,
-                label_map=self.config.label_map,
-                region_labels=region_labels,
-                tissue_annotation=tissue_region,
-                otsu_annotation=self.config.otsu_annotation,
-                tissue_annotation_intersection_ratio=self.config.tissue_annotation_intersection_ratio,
-                apply_prefilter=self.config.apply_prefilter,
-            )
+        # with min_intersection_ratio == 0 every patch passes the background check,
+        # but the tissue masks/thumbnails are still needed for the storage
+        (
+            interesting_coords,
+            mask_images,
+            mask_images_annotations,
+        ) = compute_interesting_patches(
+            polygons=polygons,
+            slide=slide,
+            tiles=tiles,
+            target_level=level,
+            target_patch_size=tile_size,
+            target_overlap=overlap,
+            rescaling_factor=self.rescaling_factor,
+            mask_otsu=self.config.masked_otsu,
+            label_map=self.config.label_map,
+            region_labels=region_labels,
+            tissue_annotation=tissue_region,
+            otsu_annotation=self.config.otsu_annotation,
+            tissue_annotation_intersection_ratio=self.config.tissue_annotation_intersection_ratio,
+            apply_prefilter=self.config.apply_prefilter,
+        )
         if len(interesting_coords) == 0:
             logger.warning(f"No patches sampled from {wsi_file.name}")
         wsi_metadata = {
@@ -928,9 +931,11 @@ class PreProcessor(object):
 
             patches_count = patches_count + 1
 
+            # the queue pickles the item asynchronously (feeder thread): pass a copy of the metadata,
+            # since the dict is modified right below for patch_metadata.json
             queue_elem = (
                 patch,
-                patch_metadata,
+                copy.deepcopy(patch_metadata),
                 patch_mask,
                 context_patches,
                 self.config.patch_size,
@@ -956,16 +961,20 @@ class PreProcessor(object):
             queue.put(None)
 
         pbar.close()
-        # wait for the queue to end
-        while not queue.empty():
-            print(f"Progress: {processed_count.value}/{len(batch)}", end="\r")
-            print("", end="", flush=True)
+        # wait for the storage workers to drain the queue (poll instead of busy-waiting)
+        store_pbar = tqdm(total=patches_count, desc="Storing patches")
+        while any(p.is_alive() for p in processes):
+            store_pbar.n = processed_count.value
+            store_pbar.refresh()
+            time.sleep(0.5)
+        store_pbar.n = processed_count.value
+        store_pbar.refresh()
+        store_pbar.close()
 
         # Wait for all workers to finish
         for p in processes:
             p.join()
             p.close()
-        pbar.close()
 
         logger.info("Finished Processing and Storing. Took:")
         end_timer(start_time)
@@ -993,6 +1002,7 @@ class PreProcessor(object):
             patch_size=self.config.patch_size,
             patch_overlap=self.config.patch_overlap,
             downsample=self.config.downsample,
+            target_mag=self.config.target_mag,
             level=self.config.level,
             min_background_ratio=self.config.min_intersection_ratio,
         )
@@ -1000,14 +1010,12 @@ class PreProcessor(object):
         ((_, _), (_, _, _, _), (interesting_coords_wsi, _, _, _)) = self._prepare_wsi(
             wsi_file
         )
-        # convert divided back to batch
-        # batch = [item for sublist in divided for item in sublist]
 
         # open slide
         slide = OpenSlide(str(wsi_file))
         slide_cu = self.image_loader(str(wsi_file))
-        tile_size = patch_to_tile_size(
-            self.config.patch_size, self.config.patch_overlap
+        tile_size, overlap = patch_to_tile_size(
+            self.config.patch_size, self.config.patch_overlap, self.rescaling_factor
         )
 
         # extract all patches
@@ -1016,7 +1024,7 @@ class PreProcessor(object):
             osr=slide,
             cucim_slide=slide_cu,
             tile_size=tile_size,
-            overlap=self.config.patch_overlap,
+            overlap=overlap,
             limit_bounds=True,
         )
 
@@ -1024,7 +1032,7 @@ class PreProcessor(object):
             new_tile = np.array(
                 tiles.get_tile(self.curr_wsi_level, (col, row)), dtype=np.uint8
             )
-            patches.append(pad_tile(new_tile, self.config.patch_size, col, row))
+            patches.append(pad_tile(new_tile, tile_size + 2 * overlap, col, row))
 
         _, stain_vectors, max_sat = macenko_normalization(patches)
 

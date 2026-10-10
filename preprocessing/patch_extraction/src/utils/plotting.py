@@ -6,19 +6,28 @@
 # University Medicine Essen
 
 import math
-import os
-import warnings
 from typing import List, Tuple, Dict
 
 import numpy as np
-import rasterio
 from PIL import Image, ImageDraw
-from rasterio.mask import mask as rasterio_mask
 from shapely.geometry import Polygon
 
 from configs.python.config import COLOR_DEFINITIONS
-from preprocessing.patch_extraction.src.utils.masking import get_filtered_polygons
+from preprocessing.patch_extraction.src.utils.masking import (
+    get_filtered_polygons,
+    rasterize_polygons,
+)
 
+
+def _flatten_polygons(geometries: List) -> List[Polygon]:
+    """Flatten (Multi)Polygons / GeometryCollections into a list of simple Polygons (for drawing outlines)"""
+    flat = []
+    for geom in geometries:
+        if geom.geom_type == "Polygon":
+            flat.append(geom)
+        elif hasattr(geom, "geoms"):  # MultiPolygon, GeometryCollection, ...
+            flat += _flatten_polygons(list(geom.geoms))
+    return flat
 
 
 def generate_polygon_overview(
@@ -51,108 +60,86 @@ def generate_polygon_overview(
 
     mask_container = {}
     image_container = {}
-    areas = {}
+    areas = []  # (area, label) pairs
     region_label_set = set(region_labels)
+    mask_shape = tuple(reference_size[:2])
 
-    # save white basic image
+    # white basic image
     white_bg = Image.fromarray(255 * np.ones(shape=reference_size, dtype=np.uint8))
-    white_bg.save("tmp.tif")
 
     if image is None:
-        src = 255 * np.ones(shape=reference_size, dtype=np.uint8)
-        image = Image.fromarray(src)
+        image = white_bg.copy()
     # draw individual images
     for label in region_label_set:
+        label_color = tuple(COLOR_DEFINITIONS[label_map[label]])
         label_image = image.copy()
         white_image = white_bg.copy()
-        if tissue_grid is not None:
-            label_tissue_grid = tissue_grid.copy()
-        else:
-            label_tissue_grid = None
+        label_tissue_grid = tissue_grid.copy() if tissue_grid is not None else None
         label_polygon = get_filtered_polygons(
-            polygons, region_labels, label, downsample
+            polygons, region_labels, [label], downsample
         )
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore")
-            with rasterio.open("tmp.tif") as src:
-                out_image, out_transform = rasterio_mask(src, label_polygon, crop=False)
-                # check polygon draw
-                label_polygon_list = []
-                for poly in label_polygon:
-                    if poly.type == "MultiPolygon":
-                        labels = [x for x in poly.geoms]
-                        label_polygon_list = label_polygon_list + labels
-                    else:
-                        label_polygon_list = label_polygon_list + [poly]
-                poly_outline_image = label_image.copy()
-                poly_outline_image_draw = ImageDraw.Draw(poly_outline_image)
-                [
-                    poly_outline_image_draw.polygon(
-                        list(lp.exterior.coords),
-                        outline=COLOR_DEFINITIONS[label_map[label]],
-                        width=5,
-                    )
-                    for lp in label_polygon_list
-                ]
-                # [poly_outline_image_draw.polygon(list(lp.interiors), outline=COLOR_DEFINITIONS[label_map[label]] , width=5) for lp in label_polygon_list if len(list(lp.interiors)) > 2]
-                # TODO: interiors are wrong, needs to be fixed (check file ID_1004_LOC_4_TIME_2_BUYUE2088_STATUS_0_UID_27 for an example with interiors)
+        label_polygon_list = _flatten_polygons(label_polygon)
 
-                mask = out_image.transpose(1, 2, 0)
-                mask = (mask / 255).astype(np.uint8)
-                area = np.sum(mask[:, :, 0])
+        poly_outline_image = label_image.copy()
+        poly_outline_image_draw = ImageDraw.Draw(poly_outline_image)
+        for lp in label_polygon_list:
+            poly_outline_image_draw.polygon(
+                list(lp.exterior.coords), outline=label_color, width=5
+            )
+        # TODO: interiors (holes) are not drawn in the outline images
 
-                opacity_mask = Image.fromarray(mask[:, :, 0] * 180)
-                polygon_image = Image.fromarray(
-                    (COLOR_DEFINITIONS[label_map[label]] * mask).astype(np.uint8)
-                )
-                label_image.paste(polygon_image, (0, 0), opacity_mask)
-                white_image.paste(polygon_image, (0, 0), opacity_mask)
-                mask_container[label] = {
-                    "polygon_image": polygon_image,
-                    "polygon_outline": label_polygon_list,
-                    "mask": opacity_mask,
-                }
-                if label_tissue_grid is not None:
-                    label_tissue_grid.paste(polygon_image, (0, 0), opacity_mask)
-                    mask_container[label]["tissue_grid"] = label_tissue_grid
-                    image_container[f"{label}_grid"] = label_tissue_grid
-                image_container[label] = label_image
-                image_container[f"{label}_clean"] = white_image
-                image_container[f"{label}_ouline"] = poly_outline_image
-                areas[area] = label
+        mask = rasterize_polygons(label_polygon, shape=mask_shape, value=1)[..., None]
+        area = int(np.sum(mask[:, :, 0]))
 
-    os.remove("tmp.tif")
+        opacity_mask = Image.fromarray(mask[:, :, 0] * 180)
+        polygon_image = Image.fromarray(
+            (np.array(label_color, dtype=np.uint8) * mask).astype(np.uint8)
+        )
+        label_image.paste(polygon_image, (0, 0), opacity_mask)
+        white_image.paste(polygon_image, (0, 0), opacity_mask)
+        mask_container[label] = {
+            "polygon_image": polygon_image,
+            "polygon_outline": label_polygon_list,
+            "mask": opacity_mask,
+        }
+        if label_tissue_grid is not None:
+            label_tissue_grid.paste(polygon_image, (0, 0), opacity_mask)
+            mask_container[label]["tissue_grid"] = label_tissue_grid
+            image_container[f"{label}_grid"] = label_tissue_grid
+        image_container[label] = label_image
+        image_container[f"{label}_clean"] = white_image
+        image_container[f"{label}_outline"] = poly_outline_image
+        areas.append((area, label))
 
-    # draw all masks on one image, sorted by areas
-    sorted_labels = [areas[k] for k in sorted(areas, reverse=True)]
+    # draw all masks on one image, largest areas first
+    sorted_labels = [label for _, label in sorted(areas, key=lambda t: t[0], reverse=True)]
 
     final_image = image.copy()
     final_white = white_bg.copy()
     final_outline = image.copy()
-    final_grid = tissue_grid.copy()
+    final_grid = tissue_grid.copy() if tissue_grid is not None else None
     final_outline_draw = ImageDraw.Draw(final_outline)
     for label in sorted_labels:
         polygon_image = mask_container[label]["polygon_image"]
         opacity_mask = mask_container[label]["mask"]
         polygon_outline = mask_container[label]["polygon_outline"]
         final_image.paste(polygon_image, (0, 0), opacity_mask)
-        final_grid.paste(polygon_image, (0, 0), opacity_mask)
+        if final_grid is not None:
+            final_grid.paste(polygon_image, (0, 0), opacity_mask)
         final_white.paste(polygon_image, (0, 0), opacity_mask)
-        [
+        for lp in polygon_outline:
             final_outline_draw.polygon(
                 list(lp.exterior.coords),
-                outline=COLOR_DEFINITIONS[label_map[label]],
+                outline=tuple(COLOR_DEFINITIONS[label_map[label]]),
                 width=5,
             )
-            for lp in polygon_outline
-        ]
-        # [final_outline_draw.polygon(list(lp.interiors), outline=COLOR_DEFINITIONS[label_map[label]] , width=5) for lp in polygon_outline if len(list(lp.interiors)) > 2]
 
     image_container["all_overlaid"] = final_image
     image_container["all_overlaid_clean"] = final_white
     image_container["all_overlaid_outline"] = final_outline
-    image_container["all_overlaid_grid"] = final_grid
-    
+    if final_grid is not None:
+        image_container["all_overlaid_grid"] = final_grid
+
     return image_container
 
 

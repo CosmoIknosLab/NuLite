@@ -14,7 +14,17 @@ from pathlib import Path
 from typing import Any, List, Optional, Tuple
 
 import yaml
-from pydantic import BaseModel, validator
+from pydantic import BaseModel
+
+try:  # pydantic >= 2
+    from pydantic import field_validator as _field_validator
+
+    def validator(*fields):  # noqa: D401 - thin compat wrapper
+        """Field validator decorator compatible with pydantic v1 ``@validator`` usage."""
+        return _field_validator(*fields)
+
+except ImportError:  # pydantic 1.x
+    from pydantic import validator
 
 from base_ml.base_cli import ABCParser
 from configs.python.config import ANNOTATION_EXT, LOGGING_EXT, WSI_EXT
@@ -24,56 +34,56 @@ from utils.logger import Logger
 class PreProcessingYamlConfig(BaseModel):
     """For explanation, see PreProcessingParser"""
 
-    # Set all to optional to allow selecting from yaml and argparse cli
+    # Set all to optional (default None) to allow selecting from yaml and argparse cli
 
     # dataset paths
-    wsi_paths: Optional[str]
-    output_path: Optional[str]
-    wsi_extension: Optional[str]
-    wsi_filelist: Optional[str]
+    wsi_paths: Optional[str] = None
+    output_path: Optional[str] = None
+    wsi_extension: Optional[str] = None
+    wsi_filelist: Optional[str] = None
 
     # basic setups
-    patch_size: Optional[int]
-    patch_overlap: Optional[float]
-    target_mpp: Optional[float]
-    target_mag: Optional[float]
-    downsample: Optional[int]
-    level: Optional[int]
-    context_scales: Optional[List[int]]
-    check_resolution: Optional[float]
-    processes: Optional[int]
-    overwrite: Optional[bool]
+    patch_size: Optional[int] = None
+    patch_overlap: Optional[float] = None
+    target_mpp: Optional[float] = None
+    target_mag: Optional[float] = None
+    downsample: Optional[int] = None
+    level: Optional[int] = None
+    context_scales: Optional[List[int]] = None
+    check_resolution: Optional[float] = None
+    processes: Optional[int] = None
+    overwrite: Optional[bool] = None
 
     # annotation specific settings
-    annotation_paths: Optional[str]
-    annotation_extension: Optional[str]
-    incomplete_annotations: Optional[bool]
-    label_map_file: Optional[str]
-    save_only_annotated_patches: Optional[bool]
-    exclude_classes: Optional[List[str]]
-    store_masks: Optional[bool]
-    generate_thumbnails: Optional[bool]
-    overlapping_labels: Optional[bool]
+    annotation_paths: Optional[str] = None
+    annotation_extension: Optional[str] = None
+    incomplete_annotations: Optional[bool] = None
+    label_map_file: Optional[str] = None
+    save_only_annotated_patches: Optional[bool] = None
+    exclude_classes: Optional[List[str]] = None
+    store_masks: Optional[bool] = None
+    generate_thumbnails: Optional[bool] = None
+    overlapping_labels: Optional[bool] = None
 
     # macenko stain normalization
-    normalize_stains: Optional[bool]
-    normalization_vector_json: Optional[str]
-    adjust_brightness: Optional[bool]
+    normalize_stains: Optional[bool] = None
+    normalization_vector_json: Optional[str] = None
+    adjust_brightness: Optional[bool] = None
 
     # finding patches
-    min_intersection_ratio: Optional[float]
-    tissue_annotation: Optional[str]
-    tissue_annotation_intersection_ratio: Optional[float] 
-    masked_otsu: Optional[bool]
-    otsu_annotation: Optional[str]
-    filter_patches: Optional[bool]
-    apply_prefilter: Optional[bool]
+    min_intersection_ratio: Optional[float] = None
+    tissue_annotation: Optional[str] = None
+    tissue_annotation_intersection_ratio: Optional[float] = None
+    masked_otsu: Optional[bool] = None
+    otsu_annotation: Optional[str] = None
+    filter_patches: Optional[bool] = None
+    apply_prefilter: Optional[bool] = None
 
     # other
-    log_path: Optional[str]
-    log_level: Optional[str]
-    hardware_selection: Optional[str]
-    wsi_properties: Optional[dict]
+    log_path: Optional[str] = None
+    log_level: Optional[str] = None
+    hardware_selection: Optional[str] = None
+    wsi_properties: Optional[dict] = None
 
 
 class PreProcessingConfig(BaseModel):
@@ -158,28 +168,28 @@ class PreProcessingConfig(BaseModel):
 
     # dataset paths
     output_path: str
-    wsi_paths: Optional[str]
-    wsi_filelist: Optional[str]
+    wsi_paths: Optional[str] = None
+    wsi_filelist: Optional[str] = None
     wsi_extension: Optional[str] = "svs"
 
     # basic setups
     patch_size: Optional[int] = 256
     patch_overlap: Optional[float] = 0
     downsample: Optional[int] = 1
-    target_mpp: Optional[float]
-    target_mag: Optional[float]
-    level: Optional[int]
-    context_scales: Optional[List[int]]
-    check_resolution: Optional[float]
+    target_mpp: Optional[float] = None
+    target_mag: Optional[float] = None
+    level: Optional[int] = None
+    context_scales: Optional[List[int]] = None
+    check_resolution: Optional[float] = None
     processes: Optional[int] = 16
     overwrite: Optional[bool] = False
 
     # annotation specific settings
-    annotation_paths: Optional[str]
-    annotation_extension: Optional[str]
+    annotation_paths: Optional[str] = None
+    annotation_extension: Optional[str] = None
     incomplete_annotations: Optional[bool] = False
-    label_map_file: Optional[str]
-    label_map: Optional[dict]
+    label_map_file: Optional[str] = None
+    label_map: Optional[dict] = None
     save_only_annotated_patches: Optional[bool] = False
     exclude_classes: Optional[List[str]] = []
     store_masks: Optional[bool] = False
@@ -187,27 +197,33 @@ class PreProcessingConfig(BaseModel):
 
     # macenko stain normalization
     normalize_stains: Optional[bool] = False
-    normalization_vector_json: Optional[str]
+    normalization_vector_json: Optional[str] = None
     adjust_brightness: Optional[bool] = False
 
     # finding patches
     min_intersection_ratio: Optional[float] = 0.01
-    tissue_annotation: Optional[str]
-    tissue_annotation_intersection_ratio: Optional[float]
+    tissue_annotation: Optional[str] = None
+    tissue_annotation_intersection_ratio: Optional[float] = None
     masked_otsu: Optional[bool] = False
-    otsu_annotation: Optional[str]
+    otsu_annotation: Optional[str] = None
     filter_patches: Optional[bool] = False
     apply_prefilter: Optional[bool] = False
 
     # other
-    log_path: Optional[str]
+    log_path: Optional[str] = None
     log_level: Optional[str] = "info"
     hardware_selection: Optional[str] = "cucim"
-    wsi_properties: Optional[dict]
+    wsi_properties: Optional[dict] = None
 
     def __init__(__pydantic_self__, **data: Any) -> None:
         super().__init__(**data)
         __pydantic_self__.__post_init_post_parse__()
+
+    def to_dict(self) -> dict:
+        """Plain dict of the configuration (pydantic v1/v2 compatible)"""
+        if hasattr(self, "model_dump"):
+            return self.model_dump()
+        return self.dict()
 
     # validators
     @validator("patch_size")
@@ -218,7 +234,7 @@ class PreProcessingConfig(BaseModel):
 
     @validator("patch_overlap")
     def overlap_percentage(cls, v):
-        if v < 0 and v >= 100:
+        if v < 0 or v >= 100:
             raise ValueError(
                 "Patch-Overlap in percentage must be between 0 and 100 (100 not included)"
             )
@@ -232,7 +248,7 @@ class PreProcessingConfig(BaseModel):
 
     @validator("min_intersection_ratio")
     def min_intersection_ratio_range_check(cls, v):
-        if v < 0 and v > 1:
+        if v < 0 or v > 1:
             raise ValueError("Background ratio must be between 0 and 1")
         return v
 
@@ -246,7 +262,7 @@ class PreProcessingConfig(BaseModel):
 
     @validator("log_level")
     def log_level_check(cls, v):
-        if v not in LOGGING_EXT:
+        if v.lower() not in LOGGING_EXT:
             raise ValueError(f"Wrong logging level. Options are {LOGGING_EXT}")
         return v.upper()
 
@@ -308,7 +324,7 @@ class PreProcessingConfig(BaseModel):
         if self.tissue_annotation_intersection_ratio is None:
             self.tissue_annotation_intersection_ratio = self.min_intersection_ratio
         else:
-            if self.tissue_annotation_intersection_ratio < 0 and self.tissue_annotation_intersection_ratio > 1:
+            if self.tissue_annotation_intersection_ratio < 0 or self.tissue_annotation_intersection_ratio > 1:
                 raise RuntimeError("Tissue_annotation_intersection_ratio must be between 0 and 1")
 
 class PreProcessingParser(ABCParser):
@@ -557,8 +573,9 @@ class PreProcessingParser(ABCParser):
         )
         parser.add_argument(
             "--wsi_properties",
-            type=dict,
-            help="Dictionary with manual WSI metadata, but just applies if metadata cannot be derived from OpenSlide (e.g., for .tiff files). Supported keys are slide_mpp and magnification",
+            type=json.loads,
+            help="JSON dictionary with manual WSI metadata, but just applies if metadata cannot be derived from OpenSlide (e.g., for .tiff files). "
+            'Supported keys are slide_mpp and magnification, e.g. \'{"slide_mpp": 0.25, "magnification": 40}\'',
         )
 
         self.parser = parser
@@ -619,7 +636,7 @@ class PreProcessingParser(ABCParser):
     def store_config(self) -> None:
         """Store the config file in the logging directory to keep track of the configuration."""
         # get dict and convert paths to str
-        config_repr = self.preprocessconfig.dict()
+        config_repr = self.preprocessconfig.to_dict()
         config_repr_str = {
             k: str(v) for k, v in config_repr.items() if isinstance(v, Path)
         }
@@ -635,8 +652,8 @@ class PreProcessingParser(ABCParser):
 
 
 class MacenkoYamlConfig(PreProcessingYamlConfig):
-    wsi_path: Optional[str]
-    save_json_path: Optional[str]
+    wsi_path: Optional[str] = None
+    save_json_path: Optional[str] = None
 
 
 class MacenkoConfig(PreProcessingConfig):
