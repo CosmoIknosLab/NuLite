@@ -8,6 +8,7 @@
 
 import importlib
 import logging
+import os
 import sys
 
 import types
@@ -18,7 +19,7 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import torch
 
-from utils.__init__ import logger
+from utils import logger
 
 
 # Helper timing functions
@@ -110,6 +111,22 @@ def module_exists(
     if len(modules) == 1:
         return modules[0]
     return tuple(modules)
+
+
+def available_cpu_count(default: int = 16) -> int:
+    """Number of CPUs usable by this process (honours cgroup/Slurm affinity where available)
+
+    Args:
+        default (int, optional): Fallback if the count cannot be determined. Defaults to 16.
+
+    Returns:
+        int: Number of usable CPUs (at least 1)
+    """
+    try:
+        count = len(os.sched_getaffinity(0))
+    except (AttributeError, OSError):  # e.g. Windows / macOS
+        count = os.cpu_count() or default
+    return max(1, int(count))
 
 
 def close_logger(logger: logging.Logger) -> None:
@@ -217,7 +234,6 @@ def remove_parameter_tag(d: dict, sep: str = ".") -> dict:
                 new_keys.append(k)
         joined_key = sep.join(new_keys)
         param_dict[joined_key] = {}
-    print(param_dict)
     for k, v in d.items():
         unflattened_keys = k.split(sep)
         new_keys = []
@@ -321,8 +337,8 @@ class DataclassHVStorage:
     #         self.regression_loss = False
 
     def get_dict(self) -> dict:
-        """Return dictionary of entries"""
-        property_dict = self.__dict__
-        if not self.regression_loss and "regression_map" in property_dict.keys():
-            property_dict.pop("regression_map")
+        """Return a (shallow) dictionary copy of the entries, without regression_map if unused"""
+        property_dict = dict(self.__dict__)
+        if not self.regression_loss:
+            property_dict.pop("regression_map", None)
         return property_dict

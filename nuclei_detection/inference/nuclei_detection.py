@@ -28,10 +28,8 @@ import torch.nn.functional as F
 import tqdm
 import ujson
 from einops import rearrange
-from pandarallel import pandarallel
 
 from shapely import strtree
-from shapely.errors import ShapelyDeprecationWarning
 from shapely.geometry import Polygon, MultiPolygon
 from torch.utils.data import DataLoader
 from torchvision import transforms as T
@@ -45,10 +43,14 @@ from nuclei_detection.utils.template_geojson import (
 from nuclei_detection.datamodel.wsi_datamodel import WSI
 from preprocessing.encoding.datasets.patched_wsi_inference import PatchedWSIInference
 from utils.logger import Logger
-from utils.tools import unflatten_dict, get_size_of_dict
+from utils.tools import available_cpu_count, get_size_of_dict, unflatten_dict
 
-warnings.filterwarnings("ignore", category=ShapelyDeprecationWarning)
-pandarallel.initialize(progress_bar=False, nb_workers=1)
+try:  # only exists in shapely < 2.1
+    from shapely.errors import ShapelyDeprecationWarning
+
+    warnings.filterwarnings("ignore", category=ShapelyDeprecationWarning)
+except ImportError:  # pragma: no cover
+    pass
 
 # color setup
 COLOR_DICT = {
@@ -86,8 +88,13 @@ class CellSegmentationInference:
                 Defaults to False.
         """
         self.model_path = Path(model_path)
-        self.device = f"cuda:{gpu}"
+        if torch.cuda.is_available():
+            self.device = f"cuda:{gpu}"
+        else:
+            self.device = "cpu"
         self.__instantiate_logger()
+        if self.device == "cpu":
+            self.logger.warning("No CUDA device available - running inference on CPU (slow)")
         self.__load_model()
         self.__load_inference_transforms()
 
@@ -105,17 +112,30 @@ class CellSegmentationInference:
         """Load model and checkpoint and load the state_dict"""
         self.logger.info(f"Loading model: {self.model_path}")
 
-        model_checkpoint = torch.load(self.model_path, map_location="cpu")
+        model_checkpoint = torch.load(
+            self.model_path, map_location="cpu", weights_only=False
+        )
 
         # unpack checkpoint
+        if "config" not in model_checkpoint:
+            raise KeyError(
+                f"Checkpoint {self.model_path} has no 'config' entry. "
+                "Checkpoints written by NuLiteTrainer contain it; for older checkpoints use sanitize_weights.py."
+            )
         self.run_conf = unflatten_dict(model_checkpoint["config"], ".")
-        self.model = NuLite(num_nuclei_classes=6, num_tissue_classes=19, vit_structure=self.run_conf["model"]["backbone"])
+        data_conf = self.run_conf.get("data", {})
+        self.model = NuLite(
+            num_nuclei_classes=int(data_conf.get("num_nuclei_classes", 6)),
+            num_tissue_classes=int(data_conf.get("num_tissue_classes", 19)),
+            vit_structure=self.run_conf["model"]["backbone"],
+            pretrained_encoder=False,  # weights come from the checkpoint
+        )
         self.logger.info(
             self.model.load_state_dict(model_checkpoint["model_state_dict"])
         )
         self.model.eval()
-        self.model.to(self.device)
         self.model.reparameterize_encoder()
+        self.model.to(self.device)
 
     def __load_inference_transforms(self):
         """Load the inference transformations from the run_configuration"""
@@ -136,31 +156,33 @@ class CellSegmentationInference:
             self,
             wsi: WSI,
             subdir_name: str = None,
-            patch_size: int = 2048,
-            overlap: int = 64,
             batch_size: int = 8,
             geojson: bool = False,
     ) -> None:
         """Process WSI file
 
+        Patch size and overlap are taken from the WSI metadata written by the preprocessing
+        (``metadata.yaml``: ``patch_size`` and ``patch_overlap``) so that global coordinates
+        always match the grid the patches were extracted with.
+
         Args:
             wsi (WSI): WSI object
             subdir_name (str, optional): If provided, a subdir with the given name is created in the cell_detection folder.
                 Helpful if you need to store different cell detection results next to each other. Defaults to None (no subdir).
-            patch_size (int, optional): Patch-Size. Default to 1024.
-            overlap (int, optional): Overlap between patches. Defaults to 64.
             batch_size (int, optional): Batch-size for inference. Defaults to 8.
-            geosjon (bool, optional): If a geojson export should be performed. Defaults to False.
+            geojson (bool, optional): If a geojson export should be performed. Defaults to False.
         """
         self.logger.info(f"Processing WSI: {wsi.name}")
         wsi_inference_dataset = PatchedWSIInference(
             wsi, transform=self.inference_transforms
         )
 
-        num_workers = int(3 / 4 * os.cpu_count())
-        if num_workers is None:
-            num_workers = 16
-        num_workers = int(np.clip(num_workers, 1, 2 * batch_size))
+        # grid parameters used during preprocessing
+        patch_size = int(wsi.metadata["patch_size"])
+        overlap = int(wsi.metadata["patch_overlap"])
+        wsi_scaling_factor = wsi.metadata["downsampling"]
+
+        num_workers = int(np.clip(int(3 / 4 * available_cpu_count()), 1, 2 * batch_size))
 
         wsi_inference_dataloader = DataLoader(
             dataset=wsi_inference_dataset,
@@ -190,46 +212,42 @@ class CellSegmentationInference:
         }
         processed_patches = []
 
-        memory_usage = 0
+        memory_usage = 0  # bytes
         cell_count = 0
+        use_amp = self.device.startswith("cuda")
 
         with torch.no_grad():
 
-            pbar = tqdm.tqdm(wsi_inference_dataloader, total=len(wsi_inference_dataset))
+            pbar = tqdm.tqdm(total=len(wsi_inference_dataset), desc="Patches")
 
             for batch in wsi_inference_dataloader:
                 patches = batch[0].to(self.device)
 
                 metadata = batch[1]
 
-                with torch.autocast(device_type="cuda", dtype=torch.float16):
+                with torch.autocast(
+                    device_type="cuda", dtype=torch.float16, enabled=use_amp
+                ):
                     predictions = self.model.forward(patches, retrieve_tokens=True)
 
                 # reshape, apply softmax to segmentation maps
-                # predictions = self.model.reshape_model_output(predictions_, self.device)
                 instance_types, tokens = self.get_cell_predictions_with_tokens(
                     predictions, magnification=wsi.metadata["magnification"]
                 )
-                #print(f"Token-Shape: {tokens.shape}")
+                # size (in input pixels) of one token of the bottleneck feature map
+                token_stride = patch_size / tokens.shape[-1]
+                num_tokens_h, num_tokens_w = tokens.shape[-2], tokens.shape[-1]
+
                 # unpack each patch from batch
                 for idx, (patch_instance_types, patch_metadata) in enumerate(
                         zip(instance_types, metadata)
                 ):
                     pbar.update(1)
-                    # add global patch metadata
-                    patch_cell_detection = {}
-                    patch_cell_detection["patch_metadata"] = patch_metadata
-                    patch_cell_detection["type_map"] = dataset_config["nuclei_types"]
-
                     processed_patches.append(
                         f"{patch_metadata['row']}_{patch_metadata['col']}"
                     )
 
                     # calculate coordinate on highest magnifications
-                    # wsi_scaling_factor = patch_metadata["wsi_metadata"]["downsampling"]
-                    # patch_size = patch_metadata["wsi_metadata"]["patch_size"]
-                    wsi_scaling_factor = wsi.metadata["downsampling"]
-                    patch_size = wsi.metadata["patch_size"]
                     x_global = int(
                         patch_metadata["row"] * patch_size * wsi_scaling_factor
                         - (patch_metadata["row"] + 0.5) * overlap
@@ -238,12 +256,12 @@ class CellSegmentationInference:
                         patch_metadata["col"] * patch_size * wsi_scaling_factor
                         - (patch_metadata["col"] + 0.5) * overlap
                     )
+                    offset_global = np.array([x_global, y_global])
 
                     # extract cell information
                     for cell in patch_instance_types.values():
                         if cell["type"] == nuclei_types["Background"]:
                             continue
-                        offset_global = np.array([x_global, y_global])
                         centroid_global = cell["centroid"] + np.flip(offset_global)
                         contour_global = cell["contour"] + np.flip(offset_global)
                         bbox_global = cell["bbox"] + offset_global
@@ -283,18 +301,15 @@ class CellSegmentationInference:
                         cell_dict_wsi.append(cell_dict)
                         cell_dict_detection.append(cell_detection)
 
-                        # get the cell token
-                        bb_index = cell["bbox"] / patch_size
-                        bb_index[0, :] = np.floor(bb_index[0, :])
-                        bb_index[1, :] = np.ceil(bb_index[1, :])
-                        bb_index = bb_index.astype(np.uint8)
-                        #print(f"Token-Shape-Patch: {tokens.shape}")
-                        cell_token = tokens[
-                                     idx,
-                                     :,
-                                     bb_index[0, 1]: bb_index[1, 1],
-                                     bb_index[0, 0]: bb_index[1, 0],
-                                     ]
+                        # get the cell token: average the bottleneck tokens covered by the cell bbox.
+                        # bbox is [[rmin, cmin], [rmax, cmax]] in patch pixels -> convert to token indices
+                        r0, c0 = np.floor(cell["bbox"][0] / token_stride).astype(int)
+                        r1, c1 = np.ceil(cell["bbox"][1] / token_stride).astype(int)
+                        r0 = int(np.clip(r0, 0, num_tokens_h - 1))
+                        c0 = int(np.clip(c0, 0, num_tokens_w - 1))
+                        r1 = int(np.clip(r1, r0 + 1, num_tokens_h))  # at least one token
+                        c1 = int(np.clip(c1, c0 + 1, num_tokens_w))
+                        cell_token = tokens[idx, :, r0:r1, c0:c1]
                         cell_token = torch.mean(
                             rearrange(cell_token, "D H W -> (H W) D"), dim=0
                         )
@@ -304,20 +319,24 @@ class CellSegmentationInference:
                         graph_data["contours"].append(torch.Tensor(contour_global))
 
                         cell_count = cell_count + 1
-                        # dict sizes
-                        memory_usage = memory_usage + get_size_of_dict(cell_dict) / (patch_size * patch_size) + get_size_of_dict(
-                            cell_detection) / (patch_size * patch_size)  # + sys.getsizeof(cell_token)/(1024*1024)
-                        # pytorch 
-                        memory_usage = memory_usage + (cell_token.nelement() * cell_token.element_size()) / (
-                                    patch_size * patch_size) + centroid_global.nbytes / (patch_size * patch_size) + contour_global.nbytes / (
-                                                   patch_size * patch_size)
+                        memory_usage += get_size_of_dict(cell_dict) + get_size_of_dict(cell_detection)
+                        memory_usage += (
+                            cell_token.nelement() * cell_token.element_size()
+                            + centroid_global.nbytes
+                            + contour_global.nbytes
+                        )
 
-                    pbar.set_postfix(Cells=cell_count, Memory=f"{memory_usage:.2f} MB")
-                    torch.cuda.empty_cache()
+                pbar.set_postfix(Cells=cell_count, Memory=f"{memory_usage / 1024 ** 2:.2f} MB")
+
+            pbar.close()
 
         # post processing
         self.logger.info(f"Detected cells before cleaning: {len(cell_dict_wsi)}")
-        keep_idx = self.post_process_edge_cells(cell_list=cell_dict_wsi)
+        if len(cell_dict_wsi) > 0:
+            keep_idx = self.post_process_edge_cells(cell_list=cell_dict_wsi)
+        else:
+            self.logger.warning(f"No cells detected in WSI {wsi.name}")
+            keep_idx = []
         cell_dict_wsi = [cell_dict_wsi[idx_c] for idx_c in keep_idx]
         cell_dict_detection = [cell_dict_detection[idx_c] for idx_c in keep_idx]
         graph_data["cell_tokens"] = [
@@ -328,7 +347,7 @@ class CellSegmentationInference:
         self.logger.info(f"Detected cells after cleaning: {len(keep_idx)}")
 
         self.logger.info(
-            f"Processed all patches. Storing final results: {str(outdir / f'cells.json')} and cell_detection.json"
+            f"Processed all patches. Storing final results: {str(outdir / 'cells.json')} and cell_detection.json"
         )
         cell_dict_wsi = {
             "wsi_metadata": wsi.metadata,
@@ -341,7 +360,7 @@ class CellSegmentationInference:
         if geojson:
             self.logger.info("Converting segmentation to geojson")
             geojson_list = self.convert_geojson(cell_dict_wsi["cells"], True)
-            with open(str(str(outdir / "cells.geojson")), "w") as outfile:
+            with open(str(outdir / "cells.geojson"), "w") as outfile:
                 ujson.dump(geojson_list, outfile, indent=2)
 
         cell_dict_detection = {
@@ -354,25 +373,33 @@ class CellSegmentationInference:
             ujson.dump(cell_dict_detection, outfile, indent=2)
         if geojson:
             self.logger.info("Converting detection to geojson")
-            geojson_list = self.convert_geojson(cell_dict_wsi["cells"], False)
-            with open(str(str(outdir / "cell_detection.geojson")), "w") as outfile:
+            geojson_list = self.convert_geojson(cell_dict_detection["cells"], False)
+            with open(str(outdir / "cell_detection.geojson"), "w") as outfile:
                 ujson.dump(geojson_list, outfile, indent=2)
 
         self.logger.info(
             f"Create cell graph with embeddings and save it under: {str(outdir / 'cells.pt')}"
         )
+        if len(graph_data["cell_tokens"]) > 0:
+            x = torch.stack(graph_data["cell_tokens"])
+            positions = torch.stack(graph_data["positions"])
+        else:
+            x = torch.empty((0, tokens.shape[1]))
+            positions = torch.empty((0, 2))
         graph = CellGraphDataWSI(
-            x=torch.stack(graph_data["cell_tokens"]),
-            positions=torch.stack(graph_data["positions"]),
+            x=x,
+            positions=positions,
             contours=graph_data["contours"],
             metadata=graph_data["metadata"],
         )
         torch.save(graph, outdir / "cells.pt")
 
-        cell_stats_df = pd.DataFrame(cell_dict_wsi["cells"])
-        cell_stats = dict(cell_stats_df.value_counts("type"))
         nuclei_types_inverse = {v: k for k, v in nuclei_types.items()}
-        verbose_stats = {nuclei_types_inverse[k]: v for k, v in cell_stats.items()}
+        if len(cell_dict_wsi["cells"]) > 0:
+            cell_stats = pd.DataFrame(cell_dict_wsi["cells"])["type"].value_counts().to_dict()
+        else:
+            cell_stats = {}
+        verbose_stats = {nuclei_types_inverse[k]: int(v) for k, v in cell_stats.items()}
         self.logger.info(f"Finished with cell detection for WSI {wsi.name}")
         self.logger.info("Stats:")
         self.logger.info(f"{verbose_stats}")
@@ -450,6 +477,8 @@ class CellSegmentationInference:
         Returns:
             List[dict]: Geojson like list
         """
+        if len(cell_list) == 0:
+            return []
         if polygons:
             cell_segmentation_df = pd.DataFrame(cell_list)
             detected_types = sorted(cell_segmentation_df.type.unique())
@@ -459,8 +488,8 @@ class CellSegmentationInference:
                 contours = cells["contour"].to_list()
                 final_c = []
                 for c in contours:
-                    c.append(c[0])
-                    final_c.append([c])
+                    # close the ring on a copy: do not mutate the contours stored in the cell dicts
+                    final_c.append([list(c) + [c[0]]])
 
                 cell_geojson_object = get_template_segmentation()
                 cell_geojson_object["id"] = str(uuid.uuid4())
@@ -508,18 +537,21 @@ class CellPostProcessor:
                 * offset_global
             logger (logging.Logger): Logger
         """
-        if logger:
-            self.logger = logger
-            self.logger.info("Initializing Cell-Postprocessor")
+        self.logger = logger if logger is not None else logging.getLogger("__main__")
+        self.logger.info("Initializing Cell-Postprocessor")
         self.cell_df = pd.DataFrame(cell_list)
-        self.cell_df = self.cell_df.parallel_apply(convert_coordinates, axis=1)
+        # string representation "row_col" of the patch position for fast querying
+        coords = self.cell_df["patch_coordinates"]
+        self.cell_df["patch_row"] = coords.map(lambda c: c[0])
+        self.cell_df["patch_col"] = coords.map(lambda c: c[1])
+        self.cell_df["patch_coordinates"] = coords.map(lambda c: f"{c[0]}_{c[1]}")
 
         self.mid_cells = self.cell_df[
             self.cell_df["cell_status"] == 0
             ]  # cells in the mid
         self.cell_df_margin = self.cell_df[
             self.cell_df["cell_status"] != 0
-            ]  # cells either torching the border or margin
+            ]  # cells either touching the border or margin
 
     def post_process_cells(self) -> pd.DataFrame:
         """Main Post-Processing coordinator, entry point
@@ -552,18 +584,19 @@ class CellPostProcessor:
         edge_cells = self.cell_df_margin[
             self.cell_df_margin["edge_position"] == 1
             ]  # cells touching the border
-        existing_patches = list(set(self.cell_df_margin["patch_coordinates"].to_list()))
+        existing_patches = set(self.cell_df["patch_coordinates"].to_list())
 
-        edge_cells_unique = pd.DataFrame(
-            columns=self.cell_df_margin.columns
-        )  # cells torching the border without having an overlap from other patches
-
-        for idx, cell_info in edge_cells.iterrows():
-            edge_information = dict(cell_info["edge_information"])
+        def _neighbour_missing(edge_information: dict) -> bool:
+            # the first listed neighbour is the patch sharing the touched border
             edge_patch = edge_information["edge_patches"][0]
-            edge_patch = f"{edge_patch[0]}_{edge_patch[1]}"
-            if edge_patch not in existing_patches:
-                edge_cells_unique.loc[idx, :] = cell_info
+            return f"{edge_patch[0]}_{edge_patch[1]}" not in existing_patches
+
+        # cells touching the border without having an overlap from other patches
+        if len(edge_cells) > 0:
+            keep = edge_cells["edge_information"].map(_neighbour_missing).astype(bool)
+            edge_cells_unique = edge_cells[keep.values]
+        else:
+            edge_cells_unique = edge_cells
 
         cleaned_edge_cells = pd.concat([margin_cells, edge_cells_unique])
 
@@ -579,26 +612,18 @@ class CellPostProcessor:
             pd.DataFrame: Cleaned DataFrame
         """
         merged_cells = cleaned_edge_cells
+        max_iterations = 20
+        overlaps = 0
 
-        for iteration in range(20):
-            poly_list = []
+        for iteration in range(max_iterations):
+            poly_list = []  # shapely polygons
+            uid_list = []  # dataframe index of each polygon (same order as poly_list)
             for idx, cell_info in merged_cells.iterrows():
                 poly = Polygon(cell_info["contour"])
                 if not poly.is_valid:
-                    #self.logger.debug("Found invalid polygon - Fixing with buffer 0")
-                    multi = poly.buffer(0)
-                    if isinstance(multi, MultiPolygon):
-                        if len(multi) > 1:
-                            poly_idx = np.argmax([p.area for p in multi])
-                            poly = multi[poly_idx]
-                            poly = Polygon(poly)
-                        else:
-                            poly = multi[0]
-                            poly = Polygon(poly)
-                    else:
-                        poly = Polygon(multi)
-                poly.uid = idx
+                    poly = _fix_polygon(poly)
                 poly_list.append(poly)
+                uid_list.append(idx)
 
             # use an strtree for fast querying
             tree = strtree.STRtree(poly_list)
@@ -607,77 +632,80 @@ class CellPostProcessor:
             iterated_cells = set()
             overlaps = 0
 
-            for query_poly in poly_list:
-                if query_poly.uid not in iterated_cells:
-                    intersected_polygons = tree.query(
-                        query_poly
-                    )  # this also contains a self-intersection
+            for query_pos, query_poly in enumerate(poly_list):
+                query_uid = uid_list[query_pos]
+                if query_uid in iterated_cells:
+                    continue
+                # candidate indices (this also contains the self-intersection)
+                candidate_pos = _strtree_query(tree, query_poly)
+                submergers = []  # (uid, polygon) of all cells that overlap with query
+                for pos in candidate_pos:
+                    inter_uid = uid_list[pos]
+                    if inter_uid == query_uid or inter_uid in iterated_cells:
+                        continue
+                    inter_poly = poly_list[pos]
+                    inter_area = query_poly.intersection(inter_poly).area
                     if (
-                            len(intersected_polygons) > 1
-                    ):  # we have more at least one intersection with another cell
-                        submergers = []  # all cells that overlap with query
-                        for inter_poly in intersected_polygons:
-                            if (
-                                    inter_poly.uid != query_poly.uid
-                                    and inter_poly.uid not in iterated_cells
-                            ):
-                                if (
-                                        query_poly.intersection(inter_poly).area
-                                        / query_poly.area
-                                        > 0.01
-                                        or query_poly.intersection(inter_poly).area
-                                        / inter_poly.area
-                                        > 0.01
-                                ):
-                                    overlaps = overlaps + 1
-                                    submergers.append(inter_poly)
-                                    iterated_cells.add(inter_poly.uid)
-                        # catch block: empty list -> some cells are touching, but not overlapping strongly enough
-                        if len(submergers) == 0:
-                            merged_idx.append(query_poly.uid)
-                        else:  # merging strategy: take the biggest cell, other merging strategies needs to get implemented
-                            selected_poly_index = np.argmax(
-                                np.array([p.area for p in submergers])
-                            )
-                            selected_poly_uid = submergers[selected_poly_index].uid
-                            merged_idx.append(selected_poly_uid)
-                    else:
-                        # no intersection, just add
-                        merged_idx.append(query_poly.uid)
-                    iterated_cells.add(query_poly.uid)
+                            inter_area / max(query_poly.area, 1e-8) > 0.01
+                            or inter_area / max(inter_poly.area, 1e-8) > 0.01
+                    ):
+                        overlaps = overlaps + 1
+                        submergers.append((inter_uid, inter_poly))
+                        iterated_cells.add(inter_uid)
+                if len(submergers) == 0:
+                    # no (strong enough) overlap, just add
+                    merged_idx.append(query_uid)
+                else:
+                    # merging strategy: take the biggest cell (query included)
+                    submergers.append((query_uid, query_poly))
+                    selected = max(submergers, key=lambda t: t[1].area)
+                    merged_idx.append(selected[0])
+                iterated_cells.add(query_uid)
 
             self.logger.info(
                 f"Iteration {iteration}: Found overlap of # cells: {overlaps}"
             )
-            if overlaps == 0:
-                self.logger.info("Found all overlapping cells")
-                break
-            elif iteration == 20:
-                self.logger.info(
-                    f"Not all doubled cells removed, still {overlaps} to remove. For perfomance issues, we stop iterations now. Please raise an issue in git or increase number of iterations."
-                )
             merged_cells = cleaned_edge_cells.loc[
                 cleaned_edge_cells.index.isin(merged_idx)
             ].sort_index()
+            if overlaps == 0:
+                self.logger.info("Found all overlapping cells")
+                break
+        else:
+            self.logger.warning(
+                f"Not all doubled cells removed after {max_iterations} iterations, still {overlaps} to remove. "
+                "For performance reasons, we stop iterations now."
+            )
 
         return merged_cells.sort_index()
 
 
-def convert_coordinates(row: pd.Series) -> pd.Series:
-    """Convert a row from x,y type to one string representation of the patch position for fast querying
-    Repr: x_y
+def _fix_polygon(poly: Polygon) -> Polygon:
+    """Fix an invalid polygon with buffer(0); for MultiPolygons keep the largest part.
 
-    Args:
-        row (pd.Series): Row to be processed
-
-    Returns:
-        pd.Series: Processed Row
+    Works with shapely 1.8 and 2.x (uses ``.geoms``).
     """
-    x, y = row["patch_coordinates"]
-    row["patch_row"] = x
-    row["patch_col"] = y
-    row["patch_coordinates"] = f"{x}_{y}"
-    return row
+    fixed = poly.buffer(0)
+    if isinstance(fixed, MultiPolygon):
+        parts = list(fixed.geoms)
+        if len(parts) == 0:
+            return poly
+        return max(parts, key=lambda p: p.area)
+    if isinstance(fixed, Polygon):
+        return fixed
+    # buffer(0) may return a GeometryCollection or an empty geometry: keep original
+    return poly
+
+
+def _strtree_query(tree: "strtree.STRtree", geom) -> List[int]:
+    """Query an STRtree and always return the positional indices of the hits.
+
+    shapely < 2 returns geometries from ``query`` (indices via ``query_items``),
+    shapely >= 2 returns indices directly.
+    """
+    if hasattr(tree, "query_items"):  # shapely 1.8
+        return list(tree.query_items(geom))
+    return [int(i) for i in np.asarray(tree.query(geom)).ravel()]
 
 
 def get_cell_position(bbox: np.ndarray, patch_size: int) -> List[int]:
@@ -770,32 +798,39 @@ def get_cell_position_marging(
     return cell_status
 
 
-def get_edge_patch(position, row, col):
-    # row starting on bottom or on top?
-    if position == [1, 0, 0, 0]:
-        # top
-        return [[row - 1, col]]
-    if position == [1, 1, 0, 0]:
-        # top and right
-        return [[row - 1, col], [row - 1, col + 1], [row, col + 1]]
-    if position == [0, 1, 0, 0]:
-        # right
-        return [[row, col + 1]]
-    if position == [0, 1, 1, 0]:
-        # right and down
-        return [[row, col + 1], [row + 1, col + 1], [row + 1, col]]
-    if position == [0, 0, 1, 0]:
-        # down
-        return [[row + 1, col]]
-    if position == [0, 0, 1, 1]:
-        # down and left
-        return [[row + 1, col], [row + 1, col - 1], [row, col - 1]]
-    if position == [0, 0, 0, 1]:
-        # left
-        return [[row, col - 1]]
-    if position == [1, 0, 0, 1]:
-        # left and top
-        return [[row, col - 1], [row - 1, col - 1], [row - 1, col]]
+def get_edge_patch(position: List[int], row: int, col: int) -> List[List[int]]:
+    """Get the neighbouring patches a border cell may continue into.
+
+    Args:
+        position (List[int]): Border flags as returned by get_cell_position: [top, right, down, left]
+        row (int): Patch row
+        col (int): Patch col
+
+    Returns:
+        List[List[int]]: List of [row, col] neighbour patches. The directly adjacent patches
+            (sharing a touched border) come first, diagonal patches (for corners) last.
+            Always non-empty when at least one border is touched.
+    """
+    top, right, down, left = (bool(p) for p in position)
+    neighbours = []
+    if top:
+        neighbours.append([row - 1, col])
+    if right:
+        neighbours.append([row, col + 1])
+    if down:
+        neighbours.append([row + 1, col])
+    if left:
+        neighbours.append([row, col - 1])
+    # diagonal neighbours for corner cells
+    if top and right:
+        neighbours.append([row - 1, col + 1])
+    if down and right:
+        neighbours.append([row + 1, col + 1])
+    if down and left:
+        neighbours.append([row + 1, col - 1])
+    if top and left:
+        neighbours.append([row - 1, col - 1])
+    return neighbours
 
 
 # CLI
@@ -805,7 +840,7 @@ class InferenceWSIParser:
     def __init__(self) -> None:
         parser = argparse.ArgumentParser(
             formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-            description="Perform CellViT inference for given run-directory with model checkpoints and logs. Just for CellViT, not for StarDist models",
+            description="Perform NuLite inference on a preprocessed (patched) WSI or on a whole dataset of patched WSIs.",
         )
         requiredNamed = parser.add_argument_group("required named arguments")
         requiredNamed.add_argument(
@@ -815,20 +850,20 @@ class InferenceWSIParser:
             required=True,
         )
         parser.add_argument(
-            "--gpu", type=int, help="Cuda-GPU ID for inference. Default: 0", default=0
+            "--gpu", type=int, help="Cuda-GPU ID for inference", default=0
         )
         parser.add_argument(
             "--magnification",
             type=float,
-            help="Network magnification. Is used for checking patch magnification such that we use the correct resolution for network. Default: 40",
+            help="Network magnification. Is used for checking patch magnification such that we use the correct resolution for network.",
             default=40,
         )
 
         parser.add_argument(
             "--batch_size",
             type=int,
-            help="Inference batch-size. Default: 8",
-            default=64,
+            help="Inference batch-size",
+            default=8,
         )
         parser.add_argument(
             "--outdir_subdir",
@@ -856,11 +891,13 @@ class InferenceWSIParser:
             "--wsi_path",
             type=str,
             help="Path to WSI file",
+            required=True,
         )
         subparser_wsi.add_argument(
             "--patched_slide_path",
             type=str,
             help="Path to patched WSI file (specific WSI file, not parent path of patched slide dataset)",
+            required=True,
         )
 
         # Dataset
@@ -869,12 +906,16 @@ class InferenceWSIParser:
             description="Process a whole dataset",
         )
         subparser_dataset.add_argument(
-            "--wsi_paths", type=str, help="Path to the folder where all WSI are stored"
+            "--wsi_paths",
+            type=str,
+            help="Path to the folder where all WSI are stored",
+            required=True,
         )
         subparser_dataset.add_argument(
             "--patch_dataset_path",
             type=str,
             help="Path to the folder where the patch dataset is stored",
+            required=True,
         )
         subparser_dataset.add_argument(
             "--filelist",
@@ -906,28 +947,26 @@ def check_wsi(wsi: WSI, magnification: float = 40.0):
 
     Raises:
         RuntimeError: The magnification is not matching to the network input magnification.
-        RuntimeError: The patch-size is not devisible by 256.
-        RunTimeError: The patch-size is not 1024
-        RunTimeError: The overlap is not 64px sized
+        RuntimeError: The patch-size is not divisible by 256.
+        RuntimeError: The patch-size is not 1024 or 2048
+        RuntimeError: The overlap is not 64 or 128 px
     """
-    if wsi.metadata["magnification"] is not None:
+    if wsi.metadata.get("magnification") is not None:
         patch_magnification = float(wsi.metadata["magnification"])
     else:
         patch_magnification = float(
             float(wsi.metadata["base_magnification"]) / wsi.metadata["downsampling"]
         )
     patch_size = int(wsi.metadata["patch_size"])
+    patch_overlap = int(wsi.metadata["patch_overlap"])
 
-    if patch_magnification != magnification:
+    if not np.isclose(patch_magnification, magnification):
         raise RuntimeError(
-            "The magnification is not matching to the network input magnification."
+            f"The patch magnification ({patch_magnification}) is not matching to the network input magnification ({magnification})."
         )
     if (patch_size % 256) != 0:
-        raise RuntimeError("The patch-size must be devisible by 256.")
-    if wsi.metadata["patch_size"] not in [1024, 2048]:
-        raise RuntimeError("The patch-size must be 1024 or 2048.")
-    if wsi.metadata["patch_overlap"] not in [64,128]:
-        raise RuntimeError("The patch-overlap must be 64 or 128")
-
-
-
+        raise RuntimeError("The patch-size must be divisible by 256.")
+    if patch_size not in [1024, 2048]:
+        raise RuntimeError(f"The patch-size must be 1024 or 2048, got {patch_size}.")
+    if patch_overlap not in [64, 128]:
+        raise RuntimeError(f"The patch-overlap must be 64 or 128, got {patch_overlap}.")

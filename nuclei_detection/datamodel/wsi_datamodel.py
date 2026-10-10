@@ -68,10 +68,9 @@ class WSI:
         """Load metadata yaml file"""
         self.metadata_path = self.patched_slide_path / "metadata.yaml"
         with open(self.metadata_path.resolve(), "r") as metadata_yaml:
-            try:
-                self.metadata = yaml.safe_load(metadata_yaml)
-            except yaml.YAMLError as exc:
-                print(exc)
+            self.metadata = yaml.safe_load(metadata_yaml)
+        if not isinstance(self.metadata, dict):
+            raise ValueError(f"Invalid WSI metadata file: {self.metadata_path}")
         self.metadata["label_map_inverse"] = {
             v: k for k, v in self.metadata["label_map"].items()
         }
@@ -185,7 +184,7 @@ class WSI:
             self.patched_slide_path / "embeddings" / f"{self.embedding_name}.pt"
         )
         if embedding_path.is_file():
-            embedding = torch.load(embedding_path)
+            embedding = torch.load(embedding_path, map_location="cpu")
             return embedding
         else:
             raise FileNotFoundError(

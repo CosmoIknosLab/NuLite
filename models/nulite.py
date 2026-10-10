@@ -20,10 +20,10 @@ class NuLite(nn.Module):
     Args:
         num_nuclei_classes (int): Number of nuclei classes (including background)
         num_tissue_classes (int): Number of tissue classes
-        vit_structure (Literal["SAM-B", "SAM-L", "SAM-H"]): SAM model type
+        vit_structure (str): FastViT backbone (timm name), e.g. "fastvit_t8"
         drop_rate (float, optional): Dropout in MLP. Defaults to 0.
-        regression_loss (bool, optional): Use regressive loss for predicting vector components.
-            Adds two additional channels to the binary decoder, but returns it as own entry in dict. Defaults to False.
+        pretrained_encoder (bool, optional): Load the ImageNet weights of the FastViT encoder (downloaded by timm).
+            Set to False when the weights are loaded from a NuLite checkpoint afterwards. Defaults to True.
 
     Raises:
         NotImplementedError: Unknown Fast-ViT backbone structure
@@ -34,8 +34,9 @@ class NuLite(nn.Module):
             num_nuclei_classes: int,
             num_tissue_classes: int,
             vit_structure: Literal[
-                "fastvit_t8", "fastvit_t12", "fastvit_s12", "fastvit_sa24", "fastvit_sa36", "fastvit_sa36"],
+                "fastvit_t8", "fastvit_t12", "fastvit_s12", "fastvit_sa12", "fastvit_sa24", "fastvit_sa36", "fastvit_ma36"],
             drop_rate: int = 0,
+            pretrained_encoder: bool = True,
     ):
         super().__init__()
         self.vit_structure = vit_structure
@@ -59,7 +60,7 @@ class NuLite(nn.Module):
         self.drop_rate = drop_rate
         self.num_nuclei_classes = num_nuclei_classes
         self.regression_loss = False
-        self.encoder = FastViTEncoder(vit_structure)
+        self.encoder = FastViTEncoder(vit_structure, pretrained=pretrained_encoder)
         self.classifier_head = (
             nn.Linear(self.embed_dims[-1], num_tissue_classes)
             if num_tissue_classes > 0
