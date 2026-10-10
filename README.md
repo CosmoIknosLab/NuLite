@@ -215,9 +215,9 @@ arguments:
 
 ### Inference Example
 We provide an example TCGA file to show the performance and usage of our algorithms.
-The preprocessed patches and the inference results can be found in the [wsi_example](wsi_example) folder.
-The TCGA slide must be downloaded here: https://portal.gdc.cancer.gov/files/f9147f06-2902-4a64-b293-5dbf9217c668.
-Please place this file in the `wsi_example` folder.
+The slide (`wsi_example/TCGA-V5-A7RE-11A-01-TS1.57401526-EF9E-49AC-8FF6-B4F9652311CE.svs`, a 15 MB region of the
+[original GDC file](https://portal.gdc.cancer.gov/files/f9147f06-2902-4a64-b293-5dbf9217c668)), the preprocessed patches
+and the inference results can be found in the [wsi_example](wsi_example) folder.
 
 ```bash
 python3 ./preprocessing/patch_extraction/main_extraction.py --config ./config_examples/preprocessing_example.yaml
