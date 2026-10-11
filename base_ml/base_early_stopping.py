@@ -50,6 +50,7 @@ class EarlyStopping:
             bool: Returns true if the model is performing better than the current best model,
                 otherwise false
         """
+        metric = float(metric)  # keep plain Python types (checkpoint portability)
         if self.best_metric is None:
             self.best_metric = metric
             self.best_epoch = epoch
@@ -60,8 +61,6 @@ class EarlyStopping:
                     self.best_metric = metric
                     self.best_epoch = epoch
                     self.counter = 0
-                    #wandb.run.summary["Best-Epoch"] = epoch
-                    #wandb.run.summary["Best-Metric"] = metric
                     return True
                 else:
                     self.counter += 1
@@ -73,8 +72,6 @@ class EarlyStopping:
                     self.best_metric = metric
                     self.best_epoch = epoch
                     self.counter = 0
-                    #wandb.run.summary["Best-Epoch"] = epoch
-                    #wandb.run.summary["Best-Metric"] = metric
                     return True
                 else:
                     self.counter += 1

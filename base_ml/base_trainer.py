@@ -245,8 +245,17 @@ class BaseTrainer:
             best_metric = None
             best_epoch = None
         else:
-            best_metric = self.early_stopping.best_metric
-            best_epoch = self.early_stopping.best_epoch
+            # plain Python types: numpy scalars pickled under numpy 2 cannot be loaded with numpy 1.x
+            best_metric = (
+                float(self.early_stopping.best_metric)
+                if self.early_stopping.best_metric is not None
+                else None
+            )
+            best_epoch = (
+                int(self.early_stopping.best_epoch)
+                if self.early_stopping.best_epoch is not None
+                else None
+            )
 
         arch = type(self.model).__name__
         state = {
