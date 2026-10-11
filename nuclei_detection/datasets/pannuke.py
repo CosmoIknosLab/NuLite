@@ -73,16 +73,20 @@ class PanNukeDataset(CellDataset):
                 f for f in natsorted(image_path.glob("*.png")) if f.is_file()
             ]
 
-            # sanity_check: mask must exist for image
+            # sanity_check: mask must exist for image (.npz written by prepare_pannuke.py, or the legacy
+            # pickled-dict .npy of CellViT datasets)
             for fold_image in fold_images:
-                mask_path = (
-                    self.dataset / f"fold{fold}" / "labels" / f"{fold_image.stem}.npy"
-                )
-                if mask_path.is_file():
+                label_dir = self.dataset / f"fold{fold}" / "labels"
+                mask_path = None
+                for suffix in (".npz", ".npy"):
+                    candidate = label_dir / f"{fold_image.stem}{suffix}"
+                    if candidate.is_file():
+                        mask_path = candidate
+                        break
+                if mask_path is not None:
                     self.images.append(fold_image)
                     self.masks.append(mask_path)
                     self.img_names.append(fold_image.name)
-
                 else:
                     logger.debug(
                         f"Found image {fold_image}, but no corresponding annotation file!"
@@ -220,9 +224,16 @@ class PanNukeDataset(CellDataset):
             np.ndarray: Mask as array with shape (H, W, 2)
         """
         mask_path = self.masks[index]
-        mask = np.load(mask_path, allow_pickle=True)
-        inst_map = mask[()]["inst_map"].astype(np.int32)
-        type_map = mask[()]["type_map"].astype(np.int32)
+        if mask_path.suffix == ".npz":
+            # arrays only (no pickle): readable with any numpy version
+            with np.load(mask_path) as mask:
+                inst_map = mask["inst_map"].astype(np.int32)
+                type_map = mask["type_map"].astype(np.int32)
+        else:
+            # legacy format: pickled dict (pickles written by numpy 2 need numpy >= 1.26 to be loaded)
+            mask = np.load(mask_path, allow_pickle=True)
+            inst_map = mask[()]["inst_map"].astype(np.int32)
+            type_map = mask[()]["type_map"].astype(np.int32)
         mask = np.stack([inst_map, type_map], axis=-1)
         return mask
 

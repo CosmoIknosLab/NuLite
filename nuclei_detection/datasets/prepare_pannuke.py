@@ -13,7 +13,8 @@
 #
 # Output (per fold i = 0, 1, 2):
 #   <output_path>/fold{i}/images/{i}_{n}.png
-#   <output_path>/fold{i}/labels/{i}_{n}.npy      dict with "inst_map" and "type_map"
+#   <output_path>/fold{i}/labels/{i}_{n}.npz      arrays "inst_map" and "type_map" (--label_format npy writes
+#                                                 the legacy pickled dict used by CellViT datasets)
 #   <output_path>/fold{i}/types.csv               img,type (tissue type)
 #   <output_path>/fold{i}/cell_count.csv          Image,Neoplastic,Inflammatory,Connective,Dead,Epithelial
 # and in <output_path>: dataset_config.yaml and weight_config.yaml
@@ -65,8 +66,16 @@ def find_fold_file(input_path: Path, fold: int, name: str) -> Optional[Path]:
     return None
 
 
-def process_fold(fold: int, input_path: Path, output_path: Path) -> List[str]:
-    """Convert one fold. Returns the tissue types of the processed images (for weight_config.yaml)"""
+def process_fold(fold: int, input_path: Path, output_path: Path, label_format: str = "npz") -> List[str]:
+    """Convert one fold. Returns the tissue types of the processed images (for weight_config.yaml)
+
+    Args:
+        fold (int): 0-based fold index
+        input_path (Path): PanNuke download folder
+        output_path (Path): Output dataset folder
+        label_format (str, optional): "npz" (arrays, portable across numpy versions) or "npy"
+            (legacy pickled dict, as in CellViT datasets). Defaults to "npz".
+    """
     output_fold_path = Path(output_path) / f"fold{fold}"
     output_fold_path.mkdir(exist_ok=True, parents=True)
     (output_fold_path / "images").mkdir(exist_ok=True, parents=True)
@@ -98,7 +107,7 @@ def process_fold(fold: int, input_path: Path, output_path: Path) -> List[str]:
     print("Process masks")
     cell_counts = []
     for i in tqdm(range(len(images)), total=len(images)):
-        outname = f"{fold}_{i}.npy"
+        outname = f"{fold}_{i}.{label_format}"
 
         # need to create instance map and type map with shape 256x256
         mask = masks[i]
@@ -119,8 +128,11 @@ def process_fold(fold: int, input_path: Path, output_path: Path) -> List[str]:
             layer_res = ((j + 1) * np.clip(mask[:, :, j], 0, 1)).astype(np.int32)
             type_map = np.where(layer_res != 0, layer_res, type_map)
 
-        outdict = {"inst_map": inst_map, "type_map": type_map}
-        np.save(output_fold_path / "labels" / outname, outdict)
+        if label_format == "npz":
+            np.savez_compressed(output_fold_path / "labels" / outname, inst_map=inst_map, type_map=type_map)
+        else:
+            outdict = {"inst_map": inst_map, "type_map": type_map}
+            np.save(output_fold_path / "labels" / outname, outdict)
         cell_counts.append([f"{fold}_{i}.png"] + counts)
 
     cell_count_df = pd.DataFrame(cell_counts, columns=["Image"] + NUCLEI_TYPES[1:])
@@ -178,6 +190,13 @@ parser.add_argument(
     default=[0, 1, 2],
     help="Folds to process (0-based: 0 -> 'Fold 1', ...)",
 )
+parser.add_argument(
+    "--label_format",
+    type=str,
+    choices=["npz", "npy"],
+    default="npz",
+    help="Label file format: npz (plain arrays, portable across numpy versions) or npy (legacy pickled dict)",
+)
 
 if __name__ == "__main__":
     opt = parser.parse_args()
@@ -188,6 +207,6 @@ if __name__ == "__main__":
 
     all_types: List[str] = []
     for fold in opt.folds:
-        all_types += process_fold(fold, input_path, output_path)
+        all_types += process_fold(fold, input_path, output_path, label_format=opt.label_format)
     write_dataset_configs(output_path, all_types)
     print(f"Done. Dataset written to {output_path}")

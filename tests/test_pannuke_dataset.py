@@ -50,22 +50,26 @@ def prepared_dataset(tmp_path_factory):
         np.save(img_dir / "types.npy", types)
         np.save(mask_dir / "masks.npy", masks)
     all_types = []
-    for fold in range(2):
-        all_types += prepare_pannuke.process_fold(fold, raw, out)
+    # fold 0 in the portable npz format, fold 1 in the legacy pickled npy format: both must load
+    all_types += prepare_pannuke.process_fold(0, raw, out, label_format="npz")
+    all_types += prepare_pannuke.process_fold(1, raw, out, label_format="npy")
     prepare_pannuke.write_dataset_configs(out, all_types)
     return out
 
 
 def test_prepare_writes_all_required_files(prepared_dataset):
-    for fold in range(2):
+    for fold, suffix in ((0, "npz"), (1, "npy")):
         fold_dir = prepared_dataset / f"fold{fold}"
         assert len(list((fold_dir / "images").glob("*.png"))) == 6
-        assert len(list((fold_dir / "labels").glob("*.npy"))) == 6
+        assert len(list((fold_dir / "labels").glob(f"*.{suffix}"))) == 6
         types = pd.read_csv(fold_dir / "types.csv")
         assert list(types.columns) == ["img", "type"] and len(types) == 6
         counts = pd.read_csv(fold_dir / "cell_count.csv")
         assert list(counts.columns) == ["Image", "Neoplastic", "Inflammatory", "Connective", "Dead", "Epithelial"]
-        label = np.load(fold_dir / "labels" / f"{fold}_0.npy", allow_pickle=True)[()]
+        if suffix == "npz":
+            label = dict(np.load(fold_dir / "labels" / f"{fold}_0.npz"))
+        else:
+            label = np.load(fold_dir / "labels" / f"{fold}_0.npy", allow_pickle=True)[()]
         inst_ids = np.unique(label["inst_map"])
         assert inst_ids[0] == 0 and np.array_equal(inst_ids[1:], np.arange(1, len(inst_ids)))  # contiguous ids
         assert int(counts.iloc[0, 1:].sum()) == len(inst_ids) - 1
@@ -82,10 +86,12 @@ def test_dataset_items_and_sampling_weights(prepared_dataset):
     dataset = select_dataset(
         "pannuke",
         split="Train",  # case-insensitive
-        dataset_config={"train_folds": [0], "dataset_path": str(prepared_dataset)},
+        dataset_config={"train_folds": [0, 1], "dataset_path": str(prepared_dataset)},  # npz + legacy npy folds
     )
     assert isinstance(dataset, PanNukeDataset)
-    assert len(dataset) == 6
+    assert len(dataset) == 12
+    # the legacy fold loads as well
+    assert dataset[6][1]["instance_map"].shape == (256, 256)
     img, masks, tissue, name = dataset[0]
     assert img.shape == (3, 256, 256) and img.dtype == torch.float32
     assert float(img.max()) <= 1.0  # scaled to [0, 1] without transforms
@@ -98,5 +104,5 @@ def test_dataset_items_and_sampling_weights(prepared_dataset):
 
     dataset.load_cell_count()
     weights = dataset.get_sampling_weights_cell_tissue(gamma=0.85)
-    assert weights.shape == (6,)
+    assert weights.shape == (12,)
     assert torch.isfinite(weights).all() and (weights > 0).all()
