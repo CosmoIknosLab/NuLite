@@ -31,6 +31,7 @@ from preprocessing.patch_extraction.src.utils.masking import (
     generate_tissue_mask,
 )
 from preprocessing.patch_extraction.src.utils.plotting import generate_polygon_overview
+from utils.patch_grid import patch_to_tile_size  # noqa: F401 (shared with the inference)
 
 
 
@@ -103,32 +104,6 @@ def background_ratio_from_mask(background_mask: np.ndarray, patch_size: int) -> 
     return float(min(1.0, max(0.0, total_background_pixels / (patch_size**2))))
 
 
-def patch_to_tile_size(
-    patch_size: int, overlap: int, rescaling_factor: float = 1.0
-) -> Tuple[int, int]:
-    """Given patch size and overlap, it returns the size of the tile of the WSI image.
-
-    The tile size must be reduced on both sides from the overlap, since OpenSlide is adding the overlap to the tile size.
-    This function ensures that the resulting patch has the same dimensions as configured and is not extended by the overlap.
-
-    Args:
-        patch_size (int): Configured Patch Size (in pixels)
-        overlap (int): The amount of overlap between adjecent patches (in pixels)
-        recaling_factor (float, optional): Rescaling of tiles after extraction to generate matching microns per pixel.
-            Defaults to 1.0 (no rescaling)
-
-    Returns:
-        int: Resulting tile size reduced by overlap (with optional rescaling)
-        int: Resulting overlap (with optional rescaling)
-    """
-    if rescaling_factor != 1.0:
-        patch_size = rescaling_factor * patch_size
-        patch_size = int(np.ceil(patch_size / 2) * 2)
-        overlap = rescaling_factor * overlap
-        overlap = int(np.ceil(overlap / 2) * 2)
-    return patch_size - overlap * 2, overlap
-    #return patch_size, overlap
-
 def target_mag_to_downsample(base_mag: float, target_mag: float) -> int:
     """Convert the target magnification to a specific downsampling factor based on the base magnification of an image.
 
@@ -168,40 +143,35 @@ def target_mpp_to_downsample(
 ) -> Tuple[int, float]:
     """Calculate the downsampling factor needed to reach a target microns-per-pixel (mpp) resolution.
 
+    The tiles are read from the pyramid level with downsampling ``2**k`` and, if the target is not
+    on a pyramid level, resized by ``rescaling_factor`` so that ``base_mpp * downsample * rescaling_factor == target_mpp``.
+
     Args:
         base_mpp (float): The base mpp resolution.
         target_mpp (float): The target mpp resolution.
-        tolerance (float, optional): The relative tolerance for checking if the target is a power of the base. Defaults to 0.1.
-
-    Raises:
-        WrongParameterException: Raised when the target mpp is not a power of the base mpp, with a specified tolerance.
+        tolerance (float, optional): Absolute tolerance on log2(target_mpp / base_mpp) to accept the closest
+            pyramid level without rescaling (0.1 corresponds to about 7% in mpp). Defaults to 0.1.
 
     Returns:
-        int: The downsampling factor required to achieve the target mpp resolution.
-        float: Rescaling factor: If mpp is not on a pyramid level, we need to rescale manually.
+        int: Downsampling factor of the pyramid level the tiles are read from (power of 2).
+        float: Rescaling factor relative to that level: If mpp is not on a pyramid level, we need to rescale manually.
             If rescaling == 1, no rescaling is necessary.
     """
-    if target_mpp >= base_mpp:
-        exponent_fraction = np.log2((target_mpp / base_mpp))
-        nearest_integer = round(exponent_fraction)
-        is_close = np.isclose(exponent_fraction, nearest_integer, rtol=tolerance)
-        if is_close:
-            downsample = round(target_mpp / base_mpp)
-            rescaling_factor = 1.0
-        else:
-            logger.warning(
-                f"Requested mpp resolution ({target_mpp}) is not a power of the base resultion {base_mpp}. "
-                "We perform rescaling, but this may not be accurate and is very slow!"
-            )
-            downsample = int(np.floor(target_mpp / base_mpp))
-            rescaling_factor = target_mpp / base_mpp
-    else:
-        logger.warning(
-            f"Requested mpp resolution ({target_mpp}) is not a power of the base resultion {base_mpp}. "
-            "We perform rescaling, but this may not be accurate and is very slow!"
-        )
-        downsample = 1
-        rescaling_factor = target_mpp / base_mpp
+    ratio = target_mpp / base_mpp
+    exponent = float(np.log2(ratio))
+    nearest_integer = int(round(exponent))
+    # the tolerance is absolute on the log2 scale: with a relative tolerance (former rtol) the check
+    # was impossible to pass around a ratio of 1 and became looser for every further pyramid level
+    if nearest_integer >= 0 and abs(exponent - nearest_integer) <= tolerance:
+        return 2**nearest_integer, 1.0
+
+    logger.warning(
+        f"Requested mpp resolution ({target_mpp}) is not a power of the base resultion {base_mpp}. "
+        "We perform rescaling, but this may not be accurate and is very slow!"
+    )
+    # read the closest finer pyramid level and rescale the remaining factor
+    downsample = 2 ** max(0, int(np.floor(exponent)))
+    rescaling_factor = ratio / downsample
     return downsample, rescaling_factor
 
 

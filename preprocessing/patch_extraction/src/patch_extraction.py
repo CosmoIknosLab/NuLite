@@ -671,8 +671,9 @@ class PreProcessor(object):
             # so we can just use the bit length of the numbers, since 8 = 1000 and len(1000) = 4
             level = tiles.level_count - self.config.downsample.bit_length()
         else:
+            level = self.config.level
             self.config.downsample = 2 ** (tiles.level_count - level - 1)
-        if level >= tiles.level_count:
+        if level < 0 or level >= tiles.level_count:
             raise WrongParameterException(
                 "Requested level does not exist. Number of slide levels:",
                 tiles.level_count,
@@ -737,11 +738,24 @@ class PreProcessor(object):
             "patch_overlap": self.config.patch_overlap * 2,
             "patch_size": self.config.patch_size,
             "base_mpp": slide_mpp,
-            "target_patch_mpp": slide_mpp * self.rescaling_factor,
+            "target_patch_mpp": slide_mpp
+            * self.config.downsample
+            * self.rescaling_factor,
             "stain_normalization": self.config.normalize_stains,
             "magnification": slide_mag
             / (self.config.downsample * self.rescaling_factor),
             "level": level,
+            # exact grid geometry, needed to map patch coordinates back to the slide (utils/patch_grid.py):
+            # tile (row, col) starts at level-0 pixel downsampling * (row * tile_size - tile_overlap)
+            "tile_size": int(tile_size),
+            "tile_overlap": int(overlap),
+            "rescaling_factor": float(self.rescaling_factor),
+            # limit_bounds=True: level-0 position of the grid origin in the slide file (non-zero only
+            # for formats with a bounding box, e.g. MRXS). Add it to get raw slide file coordinates.
+            "level0_offset": [
+                int(slide.properties.get("openslide.bounds-x", 0)),
+                int(slide.properties.get("openslide.bounds-y", 0)),
+            ],
         }
 
         logger.info(f"{wsi_file.name}: Processing {len(interesting_coords)} patches.")

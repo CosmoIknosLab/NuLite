@@ -180,7 +180,10 @@ subcommands:
   {process_wsi,process_dataset}
 ```
 Inference always runs with float16 autocast on CUDA; if no GPU is available it falls back to the CPU (slow).
-Patch size and overlap are read from the `metadata.yaml` written by the preprocessing.
+The patch grid (patch size, overlap, pyramid level and rescaling) is read from the `metadata.yaml` written by the preprocessing.
+All coordinates in `cells.json`, `cell_detection.json` and the geojson files are level-0 pixels of the slide,
+also when the patches were extracted from a lower pyramid level (`downsample`/`target_mag`) or rescaled to a `target_mpp`.
+They are relative to the origin of the slide bounds: for formats with a bounding box (e.g. MRXS) add `level0_offset` from the metadata to get raw file coordinates.
 
 #### Single WSI
 To process a single WSI file, use the `process_wsi` subcommand:

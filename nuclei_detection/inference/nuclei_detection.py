@@ -43,6 +43,7 @@ from nuclei_detection.utils.template_geojson import (
 from nuclei_detection.datamodel.wsi_datamodel import WSI
 from preprocessing.encoding.datasets.patched_wsi_inference import PatchedWSIInference
 from utils.logger import Logger
+from utils.patch_grid import PatchGrid
 from utils.tools import available_cpu_count, get_size_of_dict, unflatten_dict
 
 try:  # only exists in shapely < 2.1
@@ -161,9 +162,11 @@ class CellSegmentationInference:
     ) -> None:
         """Process WSI file
 
-        Patch size and overlap are taken from the WSI metadata written by the preprocessing
-        (``metadata.yaml``: ``patch_size`` and ``patch_overlap``) so that global coordinates
-        always match the grid the patches were extracted with.
+        The patch grid is taken from the WSI metadata written by the preprocessing (``metadata.yaml``,
+        see :class:`utils.patch_grid.PatchGrid`), so that global coordinates always match the grid the
+        patches were extracted with, also with downsampling (pyramid level) and rescaling (target mpp).
+        Global coordinates are level-0 pixels of the slide, relative to the origin of the slide bounds
+        (``level0_offset`` in the metadata, zero for most formats).
 
         Args:
             wsi (WSI): WSI object
@@ -177,10 +180,16 @@ class CellSegmentationInference:
             wsi, transform=self.inference_transforms
         )
 
-        # grid parameters used during preprocessing
-        patch_size = int(wsi.metadata["patch_size"])
+        # grid used during preprocessing: maps patch pixels to level-0 slide coordinates
+        grid = PatchGrid.from_metadata(wsi.metadata)
+        patch_size = grid.patch_size
+        # total overlap between neighbouring patches, in patch pixels (margin classification of the cells)
         overlap = int(wsi.metadata["patch_overlap"])
-        wsi_scaling_factor = wsi.metadata["downsampling"]
+        if grid.scale != 1:
+            self.logger.info(
+                f"Patch grid: tiles of {grid.tile_size}+2x{grid.tile_overlap} px read with downsampling "
+                f"{grid.downsample}, {grid.scale:.4f} level-0 px per patch px"
+            )
 
         num_workers = int(np.clip(int(3 / 4 * available_cpu_count()), 1, 2 * batch_size))
 
@@ -247,24 +256,22 @@ class CellSegmentationInference:
                         f"{patch_metadata['row']}_{patch_metadata['col']}"
                     )
 
-                    # calculate coordinate on highest magnifications
-                    x_global = int(
-                        patch_metadata["row"] * patch_size * wsi_scaling_factor
-                        - (patch_metadata["row"] + 0.5) * overlap
-                    )
-                    y_global = int(
-                        patch_metadata["col"] * patch_size * wsi_scaling_factor
-                        - (patch_metadata["col"] + 0.5) * overlap
-                    )
-                    offset_global = np.array([x_global, y_global])
+                    # level-0 position (row, col) of the upper-left pixel of the patch
+                    patch_row, patch_col = patch_metadata["row"], patch_metadata["col"]
+                    offset_global = grid.patch_origin(patch_row, patch_col)
 
                     # extract cell information
                     for cell in patch_instance_types.values():
                         if cell["type"] == nuclei_types["Background"]:
                             continue
-                        centroid_global = cell["centroid"] + np.flip(offset_global)
-                        contour_global = cell["contour"] + np.flip(offset_global)
-                        bbox_global = cell["bbox"] + offset_global
+                        # centroid and contour are (x, y), bbox is (row, col)
+                        centroid_global = grid.to_level0(
+                            cell["centroid"], patch_row, patch_col, xy=True
+                        )
+                        contour_global = grid.to_level0(
+                            cell["contour"], patch_row, patch_col, xy=True
+                        )
+                        bbox_global = grid.to_level0(cell["bbox"], patch_row, patch_col)
                         cell_dict = {
                             "bbox": bbox_global.tolist(),
                             "centroid": centroid_global.tolist(),

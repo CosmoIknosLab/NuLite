@@ -22,7 +22,31 @@ from preprocessing.patch_extraction.src.utils.patch_util import (
     get_files_from_dir,
     is_power_of_two,
     patch_to_tile_size,
+    target_mpp_to_downsample,
 )
+
+
+@pytest.mark.parametrize(
+    "base_mpp, target_mpp, expected",
+    [
+        (0.25, 0.25, (1, 1.0)),
+        (0.2485, 0.25, (1, 1.0)),
+        (0.2527, 0.25, (1, 1.0)),  # formerly rescaled: the relative tolerance never accepted a ratio of 1
+        (0.25, 0.5, (2, 1.0)),
+        (0.2465, 0.5, (2, 1.0)),
+        (0.25, 1.0, (4, 1.0)),
+        (0.25, 0.27, (1, 0.27 / 0.25)),
+        (0.25, 0.6, (2, 1.2)),  # formerly downsampling 2 *and* rescaling 2.4 (patches at 1.2 mpp)
+        (0.25, 0.875, (2, 1.75)),  # formerly accepted as level 4 (tolerance growing with the level)
+        (0.5, 0.25, (1, 0.5)),
+    ],
+)
+def test_target_mpp_to_downsample(base_mpp, target_mpp, expected):
+    downsample, rescaling = target_mpp_to_downsample(base_mpp, target_mpp)
+    assert downsample == expected[0] and is_power_of_two(downsample)
+    assert rescaling == pytest.approx(expected[1])
+    if rescaling != 1.0:
+        assert base_mpp * downsample * rescaling == pytest.approx(target_mpp)
 
 
 def test_background_ratio_is_robust_to_unsigned_overflow():
