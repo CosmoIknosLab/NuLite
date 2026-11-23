@@ -87,7 +87,9 @@ pip install -r requirements.txt
 ```
 We tested our code with `Python 3.8.10/3.10.8` and `Cuda 12`.
 All scripts must be started from the repository root (the packages are imported as `nuclei_detection.*`, `preprocessing.*`, ...).
-The WSI preprocessing uses [OpenSlide](https://openslide.org/) (the `openslide` system library must be installed); [cuCIM](https://github.com/rapidsai/cucim) is optional (Linux only) and is used automatically when available.
+The WSI preprocessing uses [OpenSlide](https://openslide.org/) (the `openslide` system library must be installed); [cuCIM](https://github.com/rapidsai/cucim) is optional (Linux only) and is used automatically when available
+(`hardware_selection: openslide` disables it); files that cuCIM cannot open, e.g. SVS files with more than one
+full-resolution image ("more than one image with Subfile Type 0"), are read with OpenSlide.
 
 ## Training
 > **Note**

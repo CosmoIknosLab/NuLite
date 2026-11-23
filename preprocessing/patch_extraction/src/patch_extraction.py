@@ -127,6 +127,7 @@ class PreProcessor(object):
         self.files, self.annotation_files = [], []
         self.num_files = 0
         self.rescaling_factor = 1
+        self._cucim_fallback_files = set()  # files CuCIM cannot open (read with OpenSlide)
 
         # paths
         self.setup_output_path(self.config.output_path)
@@ -259,6 +260,34 @@ class PreProcessor(object):
             logger.info("Using OpenSlide")
             self.deepzoomgenerator = DeepZoomGeneratorOS
             self.image_loader = OpenSlide
+
+    def _open_slide(self, wsi_file: Union[Path, str]) -> Tuple[OpenSlide, object, type]:
+        """Open a WSI with OpenSlide and, if selected, with CuCIM.
+
+        Some files are readable by OpenSlide but not by CuCIM, e.g. SVS files with more than one image
+        with "Subfile Type 0" (CuCIM raises a RuntimeError). For those files we fall back to OpenSlide
+        instead of stopping the whole dataset.
+
+        Args:
+            wsi_file (Union[Path, str]): Path to the WSI file
+
+        Returns:
+            Tuple[OpenSlide, object, type]: OpenSlide object, slide object used to read the tiles
+                (CuImage or OpenSlide) and the matching DeepZoomGenerator class
+        """
+        slide = OpenSlide(str(wsi_file))
+        if self.image_loader is OpenSlide:
+            return slide, slide, self.deepzoomgenerator
+        try:
+            slide_cu = self.image_loader(str(wsi_file))
+        except Exception as e:
+            if str(wsi_file) not in self._cucim_fallback_files:
+                self._cucim_fallback_files.add(str(wsi_file))
+                logger.warning(
+                    f"CuCIM cannot open {Path(wsi_file).name} ({e}). Falling back to OpenSlide for this file."
+                )
+            return slide, slide, DeepZoomGeneratorOS
+        return slide, slide_cu, self.deepzoomgenerator
 
     def _set_tissue_detector(self) -> None:
         try:
@@ -595,8 +624,7 @@ class PreProcessor(object):
         logger.info(f"Computing patches for {wsi_file.name}")
 
         # load slide (OS and CuImage/OS)
-        slide = OpenSlide(str(wsi_file))
-        slide_cu = self.image_loader(str(wsi_file))
+        slide, slide_cu, deepzoomgenerator = self._open_slide(wsi_file)
         if "openslide.mpp-x" in slide.properties:
             slide_mpp = float(slide.properties.get("openslide.mpp-x"))
         elif (
@@ -654,7 +682,7 @@ class PreProcessor(object):
             self.config.patch_size, self.config.patch_overlap, self.rescaling_factor
         )
 
-        tiles = self.deepzoomgenerator(
+        tiles = deepzoomgenerator(
             osr=slide,
             cucim_slide=slide_cu,
             tile_size=tile_size,
@@ -801,14 +829,13 @@ class PreProcessor(object):
         context_tiles = {}
 
         # reload image
-        slide = OpenSlide(str(wsi_file))
-        slide_cu = self.image_loader(str(wsi_file))
+        slide, slide_cu, deepzoomgenerator = self._open_slide(wsi_file)
 
         tile_size, overlap = patch_to_tile_size(
             self.config.patch_size, self.config.patch_overlap, self.rescaling_factor
         )
 
-        tiles = self.deepzoomgenerator(
+        tiles = deepzoomgenerator(
             osr=slide,
             cucim_slide=slide_cu,
             tile_size=tile_size,
@@ -819,7 +846,7 @@ class PreProcessor(object):
         if self.config.context_scales is not None:
             for c_scale in self.config.context_scales:
                 overlap_context = int((c_scale - 1) * tile_size / 2) + overlap
-                context_tiles[c_scale] = self.deepzoomgenerator(
+                context_tiles[c_scale] = deepzoomgenerator(
                     osr=slide,
                     cucim_slide=slide_cu,
                     tile_size=tile_size,  # tile_size,
@@ -1026,15 +1053,14 @@ class PreProcessor(object):
         )
 
         # open slide
-        slide = OpenSlide(str(wsi_file))
-        slide_cu = self.image_loader(str(wsi_file))
+        slide, slide_cu, deepzoomgenerator = self._open_slide(wsi_file)
         tile_size, overlap = patch_to_tile_size(
             self.config.patch_size, self.config.patch_overlap, self.rescaling_factor
         )
 
         # extract all patches
         patches = []
-        tiles = self.deepzoomgenerator(
+        tiles = deepzoomgenerator(
             osr=slide,
             cucim_slide=slide_cu,
             tile_size=tile_size,
