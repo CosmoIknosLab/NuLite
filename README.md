@@ -184,6 +184,8 @@ subcommands:
 ```
 Inference always runs with float16 autocast on CUDA; if no GPU is available it falls back to the CPU (slow).
 The patch grid (patch size, overlap, pyramid level and rescaling) is read from the `metadata.yaml` written by the preprocessing.
+The patches are accepted if their declared magnification or the one equivalent to their resolution (40x = 0.25 µm/px) is within about 7% of `--magnification`.
+For slides whose objective power does not match their resolution, preprocess with `target_mpp: 0.25` (40x) or `0.5` (20x): the cell post-processing exists only for these two magnifications.
 All coordinates in `cells.json`, `cell_detection.json` and the geojson files are level-0 pixels of the slide,
 also when the patches were extracted from a lower pyramid level (`downsample`/`target_mag`) or rescaled to a `target_mpp`.
 They are relative to the origin of the slide bounds: for formats with a bounding box (e.g. MRXS) add `level0_offset` from the metadata to get raw file coordinates.

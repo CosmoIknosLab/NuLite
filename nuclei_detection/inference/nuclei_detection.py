@@ -190,6 +190,10 @@ class CellSegmentationInference:
                 f"Patch grid: tiles of {grid.tile_size}+2x{grid.tile_overlap} px read with downsampling "
                 f"{grid.downsample}, {grid.scale:.4f} level-0 px per patch px"
             )
+        # 40 or 20: the post-processing settings only exist for these two magnifications
+        magnification = postprocessing_magnification(wsi.metadata)
+        if magnification != wsi.metadata.get("magnification"):
+            self.logger.info(f"Cell post-processing settings for {magnification}x")
 
         num_workers = int(np.clip(int(3 / 4 * available_cpu_count()), 1, 2 * batch_size))
 
@@ -241,7 +245,7 @@ class CellSegmentationInference:
 
                 # reshape, apply softmax to segmentation maps
                 instance_types, tokens = self.get_cell_predictions_with_tokens(
-                    predictions, magnification=wsi.metadata["magnification"]
+                    predictions, magnification=magnification
                 )
                 # size (in input pixels) of one token of the bottleneck feature map
                 token_stride = patch_size / tokens.shape[-1]
@@ -945,8 +949,77 @@ class InferenceWSIParser:
         return vars(opt)
 
 
+# microns per pixel of a 40x magnification (PanNuke and the NuLite checkpoints)
+MPP_40X = 0.25
+# same tolerance as the preprocessing uses to accept a pyramid level (target_mpp_to_downsample):
+# |log2(patch / network magnification)| <= 0.1, i.e. about 7%
+MAGNIFICATION_TOLERANCE = 0.1
+
+
+def patch_magnifications(metadata: dict) -> List[float]:
+    """Magnifications the patches of a preprocessed WSI correspond to
+
+    Two estimates are returned: the declared one (objective power of the slide divided by
+    downsampling and rescaling) and, if the slide resolution is known, the one equivalent to the
+    actual patch resolution (40x = 0.25 µm/px). They differ for slides whose objective power does not
+    match their resolution, e.g. a "40x" slide scanned at 0.2 µm/px and rescaled to 0.25 µm/px.
+
+    Args:
+        metadata (dict): WSI metadata (metadata.yaml)
+
+    Returns:
+        List[float]: Declared magnification, followed by the resolution equivalent one if available
+    """
+    if metadata.get("magnification") is not None:
+        magnifications = [float(metadata["magnification"])]
+    else:
+        magnifications = [
+            float(metadata["base_magnification"]) / float(metadata["downsampling"])
+        ]
+    if metadata.get("base_mpp"):
+        patch_mpp = float(metadata["base_mpp"]) * PatchGrid.from_metadata(metadata).scale
+        magnifications.append(40.0 * MPP_40X / patch_mpp)
+    return magnifications
+
+
+def matches_magnification(metadata: dict, magnification: float) -> bool:
+    """True if the patches correspond to the given magnification (within MAGNIFICATION_TOLERANCE)"""
+    return any(
+        abs(np.log2(patch_mag / float(magnification))) <= MAGNIFICATION_TOLERANCE
+        for patch_mag in patch_magnifications(metadata)
+    )
+
+
+def postprocessing_magnification(metadata: dict) -> int:
+    """Post-processing setting (40 or 20, the only ones implemented) matching the patches
+
+    Raises:
+        RuntimeError: The patches correspond neither to 40x nor to 20x
+    """
+    for magnification in (40, 20):
+        if matches_magnification(metadata, magnification):
+            return magnification
+    raise RuntimeError(
+        f"The patches correspond to a magnification of {_format_magnifications(metadata)}: "
+        "the cell post-processing is only available for 40x (0.25 µm/px) and 20x (0.5 µm/px). "
+        "Preprocess the WSI with target_mpp 0.25 (or target_mag 40)."
+    )
+
+
+def _format_magnifications(metadata: dict) -> str:
+    mags = patch_magnifications(metadata)
+    text = f"{mags[0]:.2f}x (declared)"
+    if len(mags) > 1:
+        text += f" / {mags[1]:.2f}x (from the resolution, {40.0 * MPP_40X / mags[1]:.4f} µm/px)"
+    return text
+
+
 def check_wsi(wsi: WSI, magnification: float = 40.0):
     """Check if provided patched WSI is having the right settings
+
+    The patches match the network magnification if either their declared magnification or the one
+    equivalent to their resolution (40x = 0.25 µm/px) is within about 7% of it, the same tolerance the
+    preprocessing uses to accept a pyramid level without rescaling.
 
     Args:
         wsi (WSI): WSI to check
@@ -958,18 +1031,13 @@ def check_wsi(wsi: WSI, magnification: float = 40.0):
         RuntimeError: The patch-size is not 1024 or 2048
         RuntimeError: The overlap is not 64 or 128 px
     """
-    if wsi.metadata.get("magnification") is not None:
-        patch_magnification = float(wsi.metadata["magnification"])
-    else:
-        patch_magnification = float(
-            float(wsi.metadata["base_magnification"]) / wsi.metadata["downsampling"]
-        )
     patch_size = int(wsi.metadata["patch_size"])
     patch_overlap = int(wsi.metadata["patch_overlap"])
 
-    if not np.isclose(patch_magnification, magnification):
+    if not matches_magnification(wsi.metadata, magnification):
         raise RuntimeError(
-            f"The patch magnification ({patch_magnification}) is not matching to the network input magnification ({magnification})."
+            f"The patch magnification ({_format_magnifications(wsi.metadata)}) is not matching to the "
+            f"network input magnification ({magnification})."
         )
     if (patch_size % 256) != 0:
         raise RuntimeError("The patch-size must be divisible by 256.")

@@ -16,7 +16,9 @@ from nuclei_detection.inference.nuclei_detection import (
     get_cell_position,
     get_cell_position_marging,
     get_edge_patch,
+    postprocessing_magnification,
 )
+from utils.patch_grid import patch_to_tile_size
 
 PATCH_SIZE = 1024
 OVERLAP = 64
@@ -160,3 +162,41 @@ def test_check_wsi_validates_grid_parameters():
         check_wsi(SimpleNamespace(metadata={**good.metadata, "patch_size": 512}), magnification=40)
     with pytest.raises(RuntimeError):
         check_wsi(good, magnification=20)
+
+
+def _meta(magnification, base_mpp, downsampling=1, rescaling=1.0, grid=True):
+    meta = {"magnification": magnification, "base_magnification": 40.0, "downsampling": downsampling,
+            "base_mpp": base_mpp, "target_patch_mpp": base_mpp * downsampling * rescaling,
+            "patch_size": 1024, "patch_overlap": 64}
+    if grid:  # metadata written by the current preprocessing
+        tile_size, tile_overlap = patch_to_tile_size(1024, 32, rescaling)
+        meta.update(tile_size=tile_size, tile_overlap=tile_overlap, rescaling_factor=rescaling)
+    else:  # the former preprocessing stored base_mpp * rescaling (without the downsampling)
+        meta["target_patch_mpp"] = base_mpp * rescaling
+    return meta
+
+
+@pytest.mark.parametrize(
+    "meta, expected",
+    [
+        (_meta(40.0, 0.2485), 40),  # example slide
+        (_meta(40.0, 0.2268), 40),  # Hamamatsu "40x" at 0.227 µm/px: accepted by the declared magnification
+        (_meta(20.0, 0.2485, downsampling=2), 20),  # pyramid level, 0.497 µm/px
+        (_meta(20.0, 0.2485, downsampling=2, grid=False), 20),  # same, former metadata
+        # "40x" slide scanned at 0.2 µm/px, rescaled to target_mpp 0.25: declared 32x, but 0.25 µm/px
+        (_meta(32.0, 0.2, rescaling=1.25), 40),
+        (_meta(40 / 1.0865, 0.2485, rescaling=0.27 / 0.2485), None),  # target_mpp 0.27: neither 40x nor 20x
+    ],
+)
+def test_magnification_check_and_postprocessing_setting(meta, expected):
+    wsi = SimpleNamespace(metadata=meta)
+    if expected is None:
+        with pytest.raises(RuntimeError, match="post-processing"):
+            postprocessing_magnification(meta)
+        with pytest.raises(RuntimeError, match="not matching"):
+            check_wsi(wsi, magnification=40)
+        return
+    assert postprocessing_magnification(meta) == expected
+    check_wsi(wsi, magnification=expected)
+    with pytest.raises(RuntimeError):
+        check_wsi(wsi, magnification=60 - expected)  # 20 <-> 40
